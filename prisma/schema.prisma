@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SocialProvider {
+  X
+}
+
+enum AccountCategory {
+  ECOSYSTEM
+  COMPETITOR
+  MEDIA
+  INFLUENCER
+  FOUNDER
+}
+
+enum IngestionStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model Account {
+  id          String          @id @default(cuid())
+  displayName String
+  handle      String
+  provider    SocialProvider  @default(X)
+  category    AccountCategory
+  tags        String[]        @default([])
+  isActive    Boolean         @default(true)
+  posts       Post[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([provider, handle])
+  @@index([provider, isActive])
+  @@index([category])
+}
+
+model Post {
+  id             String         @id @default(cuid())
+  provider       SocialProvider
+  externalPostId String
+  accountId      String
+  account        Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  content        String         @db.Text
+  postedAt       DateTime
+  sourceUrl      String
+  likeCount      Int            @default(0)
+  replyCount     Int            @default(0)
+  repostCount    Int            @default(0)
+  quoteCount     Int?
+  fetchedAt      DateTime
+  rawPayload     Json?
+  summary        PostSummary?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([provider, externalPostId])
+  @@index([postedAt(sort: Desc)])
+  @@index([accountId, postedAt(sort: Desc)])
+  @@index([fetchedAt(sort: Desc)])
+}
+
+model PostSummary {
+  id        String   @id @default(cuid())
+  postId    String   @unique
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  summary   String   @db.Text
+  model     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model IngestionRun {
+  id         String          @id @default(cuid())
+  provider   SocialProvider
+  startedAt  DateTime        @default(now())
+  finishedAt DateTime?
+  status     IngestionStatus
+  notes      String?
+  metadata   Json?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@index([startedAt(sort: Desc)])
+  @@index([status])
+}
