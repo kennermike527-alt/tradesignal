@@ -12,6 +12,7 @@ import {
   Filter,
   Flame,
   Layers,
+  Info,
   MessageSquare,
   Plus,
   Radar,
@@ -167,6 +168,8 @@ export function DashboardClient({ payload }: Props) {
   );
   const [summaryError, setSummaryError] = React.useState<string | null>(null);
   const [summaryPending, startSummaryTransition] = React.useTransition();
+
+  const [showHighSignalInfo, setShowHighSignalInfo] = React.useState(false);
 
   const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
 
@@ -527,9 +530,26 @@ export function DashboardClient({ payload }: Props) {
               {numberFmt.format(scopedStats.newPosts2h)} / {numberFmt.format(scopedStats.newPosts24h)}
             </p>
           </div>
-          <div className="rounded border border-border/70 bg-card/70 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">High-signal posts</p>
+          <div className="relative rounded border border-border/70 bg-card/70 px-3 py-2">
+            <div className="flex items-center gap-1">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">High-signal posts</p>
+              <button
+                type="button"
+                onClick={() => setShowHighSignalInfo((current) => !current)}
+                className="inline-flex h-4 w-4 items-center justify-center rounded border border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
+                aria-label="Explain high-signal posts"
+              >
+                <Info className="size-2.5" />
+              </button>
+            </div>
             <p className="text-lg font-semibold">{numberFmt.format(scopedStats.highSignalPosts)}</p>
+            {showHighSignalInfo ? (
+              <div className="absolute right-2 top-7 z-20 max-w-[240px] rounded border border-border/70 bg-background/95 p-2 text-[11px] text-muted-foreground shadow-xl">
+                High-signal posts are messages whose weighted engagement score is elevated.
+                <br />
+                Score = likes + (replies × 2) + (reposts × 3) + (quotes × 2), threshold ≥ 420.
+              </div>
+            ) : null}
           </div>
           <div className="rounded border border-border/70 bg-card/70 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Opportunities detected</p>
