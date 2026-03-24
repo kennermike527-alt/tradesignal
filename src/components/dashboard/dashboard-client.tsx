@@ -28,6 +28,7 @@ import type {
   DashboardPayload,
   DashboardPost,
   IntelligenceCenter,
+  NarrativeTopicSummary,
   SourcePlatform,
   WatchlistKey,
 } from "@/lib/types";
@@ -53,15 +54,6 @@ const watchlists: Array<{ key: WatchlistKey; label: string; description: string 
   { key: "founders", label: "Founder tape", description: "Roadmap + strategic intent" },
   { key: "media", label: "Media pulse", description: "Narrative amplification risk" },
   { key: "ecosystem", label: "Ecosystem ops", description: "Partnership + launch chatter" },
-];
-
-const narrativePatterns = [
-  { id: "policy", label: "Policy", test: /policy|regulat|compliance/i },
-  { id: "partnership", label: "Partnerships", test: /partner|integrat|alliance/i },
-  { id: "liquidity", label: "Liquidity", test: /liquidity|flow|volume/i },
-  { id: "governance", label: "Governance", test: /governance|proposal|vote/i },
-  { id: "execution", label: "Execution", test: /ship|release|deployed|roadmap/i },
-  { id: "distribution", label: "Distribution", test: /distribution|growth|audience|reach/i },
 ];
 
 const centers: IntelligenceCenter[] = ["IOTA", "TWIN"];
@@ -102,6 +94,28 @@ function watchlistMatch(post: DashboardPost, watchlist: WatchlistKey) {
   if (watchlist === "media") return post.account.category === AccountCategory.MEDIA;
   if (watchlist === "ecosystem") return post.account.category === AccountCategory.ECOSYSTEM;
   return true;
+}
+
+function postMatchesNarrativeTopic(post: DashboardPost, topic: NarrativeTopicSummary) {
+  const text = `${post.content} ${post.summary?.summary ?? ""}`.toLowerCase();
+
+  const termHit = topic.key_terms.some((term) => {
+    const normalized = term.trim().toLowerCase();
+    if (!normalized || normalized.length < 3) return false;
+    return text.includes(normalized);
+  });
+
+  const labelTokens = topic.topic_name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4);
+
+  const labelHit = labelTokens.some((token) => text.includes(token));
+  const handleHit = topic.respond_to_handles.some(
+    (handle) => normalizeHandleForMatch(post.account.handle) === normalizeHandleForMatch(handle)
+  );
+
+  return termHit || labelHit || handleHit;
 }
 
 function dbTone(code: DashboardPayload["system"]["dbCode"]) {
@@ -247,16 +261,36 @@ export function DashboardClient({ payload }: Props) {
     };
   }, [sourceScopedAccounts, sourceScopedPosts, scopedReferenceTime]);
 
-  const narrativeCounts = React.useMemo(() => {
-    return narrativePatterns
-      .map((pattern) => ({
-        id: pattern.id,
-        label: pattern.label,
-        count: sourceScopedPosts.filter((post) => pattern.test.test(`${post.content} ${post.summary?.summary ?? ""}`)).length,
+  const summaryTopics = React.useMemo(() => contextSummary?.topics ?? [], [contextSummary]);
+  const summaryKeyTopics = React.useMemo(() => contextSummary?.keyTopics ?? [], [contextSummary]);
+  const summaryEngageNow = React.useMemo(
+    () => contextSummary?.global_summary.top_opportunities_to_engage ?? [],
+    [contextSummary]
+  );
+
+  const narrativeFocusOptions = React.useMemo(() => {
+    return summaryTopics
+      .map((topic) => ({
+        id: topic.topic_name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+        label: topic.topic_name,
+        count: sourceScopedPosts.filter((post) => postMatchesNarrativeTopic(post, topic)).length,
+        topic,
       }))
-      .filter((item) => item.count > 0)
+      .filter((item) => item.id && item.count > 0)
       .sort((a, b) => b.count - a.count);
-  }, [sourceScopedPosts]);
+  }, [summaryTopics, sourceScopedPosts]);
+
+  React.useEffect(() => {
+    if (narrativeFilter === "all") return;
+    if (!narrativeFocusOptions.some((option) => option.id === narrativeFilter)) {
+      setNarrativeFilter("all");
+    }
+  }, [narrativeFilter, narrativeFocusOptions]);
+
+  const selectedNarrativeTopic = React.useMemo(() => {
+    if (narrativeFilter === "all") return null;
+    return narrativeFocusOptions.find((option) => option.id === narrativeFilter)?.topic ?? null;
+  }, [narrativeFilter, narrativeFocusOptions]);
 
   const activeWatchlistHandleSet = React.useMemo(() => {
     return new Set(watchlistAccountsByKey[watchlist].map((item) => normalizeHandleForMatch(item.handle)));
@@ -287,9 +321,8 @@ export function DashboardClient({ payload }: Props) {
       .filter((post) => (opportunitiesOnly ? isOpportunity(post) : true))
       .filter((post) => {
         if (narrativeFilter === "all") return true;
-        const pattern = narrativePatterns.find((item) => item.id === narrativeFilter);
-        if (!pattern) return true;
-        return pattern.test.test(`${post.content} ${post.summary?.summary ?? ""}`);
+        if (!selectedNarrativeTopic) return true;
+        return postMatchesNarrativeTopic(post, selectedNarrativeTopic);
       })
       .sort((a, b) => b.postedAt.getTime() - a.postedAt.getTime());
   }, [
@@ -304,6 +337,7 @@ export function DashboardClient({ payload }: Props) {
     competitorsOnly,
     opportunitiesOnly,
     narrativeFilter,
+    selectedNarrativeTopic,
     activeWatchlistHandleSet,
   ]);
 
@@ -407,10 +441,6 @@ export function DashboardClient({ payload }: Props) {
       setSummaryError(null);
     });
   }, [centerFocus, sourceTab, summaryWindowHours, summaryKey, startSummaryTransition]);
-
-  const summaryTopics = contextSummary?.topics ?? [];
-  const summaryKeyTopics = contextSummary?.keyTopics ?? [];
-  const summaryEngageNow = contextSummary?.global_summary.top_opportunities_to_engage ?? [];
 
   return (
     <main className="min-h-screen bg-background px-3 py-3 sm:px-4 lg:px-5">
@@ -609,20 +639,26 @@ export function DashboardClient({ payload }: Props) {
                 >
                   All narratives
                 </button>
-                {narrativeCounts.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setNarrativeFilter(item.id)}
-                    className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-xs ${
-                      narrativeFilter === item.id
-                        ? "border-primary/40 bg-primary/10"
-                        : "border-border/60 bg-background/40 text-muted-foreground"
-                    }`}
-                  >
-                    <span>{item.label}</span>
-                    <span>{item.count}</span>
-                  </button>
-                ))}
+                {narrativeFocusOptions.length === 0 ? (
+                  <p className="rounded border border-border/60 bg-background/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+                    AI topic clusters will appear once context summary is generated.
+                  </p>
+                ) : (
+                  narrativeFocusOptions.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setNarrativeFilter(item.id)}
+                      className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-xs ${
+                        narrativeFilter === item.id
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-border/60 bg-background/40 text-muted-foreground"
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      <span>{item.count}</span>
+                    </button>
+                  ))
+                )}
               </CardContent>
             </Card>
 
