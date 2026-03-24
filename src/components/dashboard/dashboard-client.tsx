@@ -769,14 +769,37 @@ export function DashboardClient({ payload }: Props) {
                 {watchlists.map((item) => {
                   const tracked = watchlistAccountsByKey[item.key];
                   const trackedHandleSet = new Set(tracked.map((entry) => normalizeHandleForMatch(entry.handle)));
-                  const count = sourceScopedPosts.filter((post) => {
+
+                  const matchingPosts = sourceScopedPosts.filter((post) => {
                     if (item.key === "all") return true;
                     return (
                       watchlistMatch(post, item.key) ||
                       trackedHandleSet.has(normalizeHandleForMatch(post.account.handle))
                     );
-                  }).length;
+                  });
+
+                  const contributorMap = new Map<string, { handle: string; displayName: string; count: number }>();
+                  for (const post of matchingPosts) {
+                    const key = normalizeHandleForMatch(post.account.handle);
+                    const existing = contributorMap.get(key);
+
+                    if (!existing) {
+                      contributorMap.set(key, {
+                        handle: post.account.handle,
+                        displayName: post.account.displayName,
+                        count: 1,
+                      });
+                    } else {
+                      existing.count += 1;
+                    }
+                  }
+
+                  const contributors = [...contributorMap.values()].sort((a, b) => b.count - a.count);
+                  const contributorPreview = contributors.slice(0, 4);
+                  const contributorOverflow = Math.max(0, contributors.length - contributorPreview.length);
+
                   const active = item.key === watchlist;
+                  const count = matchingPosts.length;
 
                   return (
                     <div
@@ -817,19 +840,20 @@ export function DashboardClient({ payload }: Props) {
                         </button>
                       </div>
 
-                      {tracked.length > 0 ? (
+                      {contributorPreview.length > 0 ? (
                         <div className="mt-1.5 flex flex-wrap gap-1">
-                          {tracked.slice(0, 4).map((entry) => (
+                          {contributorPreview.map((entry) => (
                             <span
-                              key={entry.id}
+                              key={`${item.key}-${entry.handle}`}
+                              title={`@${entry.handle}`}
                               className="inline-flex items-center rounded border border-border/70 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
                             >
-                              {entry.handle}
+                              {entry.displayName}
                             </span>
                           ))}
-                          {tracked.length > 4 ? (
+                          {contributorOverflow > 0 ? (
                             <span className="inline-flex items-center rounded border border-border/70 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                              +{tracked.length - 4}
+                              +{contributorOverflow}
                             </span>
                           ) : null}
                         </div>
