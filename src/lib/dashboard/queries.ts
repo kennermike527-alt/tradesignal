@@ -5,16 +5,16 @@ import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
 import type { DashboardPayload, DashboardPost, DashboardStats, IntelligenceCenter, SourcePlatform } from "@/lib/types";
 
-function pickCenter(postText: string, handle: string): IntelligenceCenter {
+function pickCenter(postText: string, handle: string): IntelligenceCenter | null {
   const text = `${postText} ${handle}`.toLowerCase();
-  if (text.includes("iota")) return "IOTA";
-  if (text.includes("twin")) return "TWIN";
 
-  const parity = handle
-    .split("")
-    .reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2;
+  const isIota = /(^|\W)(iota|@iota|#iota|iota cash stack)(\W|$)/i.test(text);
+  if (isIota) return "IOTA";
 
-  return parity === 0 ? "IOTA" : "TWIN";
+  const isTwinFoundation = /(^|\W)(twin foundation|@twinfoundation|#twinfoundation|twinfoundation)(\W|$)/i.test(text);
+  if (isTwinFoundation) return "TWIN";
+
+  return null;
 }
 
 function detectSourcePlatform(sourceUrl: string): SourcePlatform {

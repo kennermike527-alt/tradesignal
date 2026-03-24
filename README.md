@@ -37,7 +37,10 @@ This is not an admin panel and not a KPI-first dashboard. The core object is the
 
 - Primary center tabs: **IOTA** and **TWIN**
 - Source tabs inside each center: **X** and **LinkedIn**
-- Network constellation keeps both hubs visible while the active center/source tab drives feed + panel scope.
+- Network constellation is center-specific; each center dashboard has its own constellation.
+- Center assignment is strict keyword policy:
+  - **IOTA** only when content includes: `iota`, `@iota`, `#iota`, or `iota cash stack`
+  - **TWIN** only when content includes: `twin foundation`, `@twinfoundation`, `#twinfoundation`, or `twinfoundation`
 
 4. **Right intelligence sidebar**
    - engage-now queue

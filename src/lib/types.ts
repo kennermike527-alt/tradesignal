@@ -40,7 +40,7 @@ export type DashboardPost = {
   repostCount: number;
   quoteCount: number;
   sourcePlatform: SourcePlatform;
-  center: IntelligenceCenter;
+  center: IntelligenceCenter | null;
   account: DashboardAccount;
   summary: {
     summary: string;
