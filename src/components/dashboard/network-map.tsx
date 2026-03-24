@@ -277,7 +277,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
       </CardHeader>
       <CardContent className="space-y-2 p-2 pt-0">
         <div
-          className="h-[360px] overflow-hidden rounded border border-border/70"
+          className="h-[520px] overflow-hidden rounded border border-border/70 xl:h-[620px]"
           style={{
             background:
               "radial-gradient(circle at center, rgba(23,35,61,0.95) 0%, rgba(7,13,28,0.98) 65%), radial-gradient(circle at 10% 10%, rgba(121,88,255,0.16), transparent 35%)",
