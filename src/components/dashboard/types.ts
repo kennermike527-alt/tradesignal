@@ -1,4 +1,4 @@
-import type { Account, AccountCategory, IngestionRun, Post, PostSummary } from '@prisma/client';
+import type { Account, AccountCategory, IngestionRun, Post, PostSummary } from "@prisma/client";
 
 export type DashboardPost = Post & {
   account: Account;
@@ -22,9 +22,9 @@ export interface DashboardData {
 }
 
 export const CATEGORY_LABELS: Record<AccountCategory, string> = {
-  ecosystem: 'Ecosystem',
-  competitor: 'Competitor',
-  media: 'Media',
-  influencer: 'Influencer',
-  founder: 'Founder',
+  ECOSYSTEM: "Ecosystem",
+  COMPETITOR: "Competitor",
+  MEDIA: "Media",
+  INFLUENCER: "Influencer",
+  FOUNDER: "Founder",
 };
