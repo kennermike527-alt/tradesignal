@@ -158,13 +158,8 @@ Open: `http://localhost:3000`
 ## Migrations and seed behavior
 
 - Baseline migration is committed at `prisma/migrations/0001_init`.
-- Seed script upserts:
-  - tracked watchlist accounts
-  - realistic demo posts
-  - summaries
-  - baseline ingestion runs (only if runs table is empty)
-
-This ensures the terminal feels alive even before production ingestion is wired.
+- Seed script can be used for local smoke testing, but production/live dashboards are intended to run in **live-only mode**.
+- No curated fallback account list is injected into runtime dashboard views.
 
 ---
 
@@ -176,7 +171,7 @@ When DB is not configured/reachable:
 
 - the app switches to **DEMO mode**
 - shows controlled status messaging in command bar
-- serves curated demo intelligence feed from `lib/dashboard/demo-payload.ts`
+- serves an empty live-only fallback state from `lib/dashboard/demo-payload.ts` (no curated account injection)
 
 Manual/API ingestion returns controlled messages/codes:
 
