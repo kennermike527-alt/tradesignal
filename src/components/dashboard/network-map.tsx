@@ -6,7 +6,7 @@ import type cytoscape from "cytoscape";
 import { AccountCategory } from "@prisma/client";
 import { Activity, ArrowRightLeft, Link2, Network, Orbit, UserRound } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { DashboardAccount, DashboardPost } from "@/lib/types";
+import type { DashboardAccount, DashboardPost, IntelligenceCenter, SourcePlatform } from "@/lib/types";
 import { buildSignalNetwork } from "@/lib/dashboard/network";
 
 const CytoscapeComponent = dynamic(() => import("react-cytoscapejs"), {
@@ -17,6 +17,8 @@ type Props = {
   posts: DashboardPost[];
   accounts: DashboardAccount[];
   selectedAccountId: string;
+  centerFocus: IntelligenceCenter;
+  sourceTab: SourcePlatform;
   onSelectAccount: (accountId: string) => void;
 };
 
@@ -30,7 +32,8 @@ type HoverState = {
   recentPostCount: number;
 };
 
-const HUB_ID = "__signalforge_hub__";
+const HUB_IOTA = "__hub_iota__";
+const HUB_TWIN = "__hub_twin__";
 
 const CATEGORY_COLORS: Record<AccountCategory, string> = {
   ECOSYSTEM: "#74a3ff",
@@ -63,7 +66,8 @@ function computePresetPositions(
   maxInfluence: number
 ) {
   const positions: Record<string, { x: number; y: number }> = {
-    [HUB_ID]: { x: 0, y: 0 },
+    [HUB_IOTA]: { x: -48, y: 6 },
+    [HUB_TWIN]: { x: 48, y: 6 },
   };
 
   const groups = new Map<AccountCategory, Array<{ id: string; influenceScore: number }>>();
@@ -78,13 +82,13 @@ function computePresetPositions(
     if (group.length === 0) continue;
 
     const centerAngle = categoryAngle(category);
-    const spread = Math.max(0.45, Math.min(1.2, group.length * 0.08));
+    const spread = Math.max(0.45, Math.min(1.25, group.length * 0.08));
 
     group.forEach((node, index) => {
       const t = group.length === 1 ? 0 : index / (group.length - 1);
       const angle = centerAngle - spread / 2 + t * spread;
       const normalized = node.influenceScore / maxInfluence;
-      const radius = 220 + (1 - normalized) * 120 + (index % 3) * 10;
+      const radius = 230 + (1 - normalized) * 125 + (index % 3) * 10;
 
       positions[node.id] = {
         x: Math.cos(angle) * radius,
@@ -96,7 +100,7 @@ function computePresetPositions(
   return positions;
 }
 
-export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount }: Props) {
+export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, sourceTab, onSelectAccount }: Props) {
   const [hovered, setHovered] = React.useState<HoverState | null>(null);
 
   const network = React.useMemo(() => buildSignalNetwork(posts, accounts), [posts, accounts]);
@@ -145,19 +149,34 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
       };
     });
 
-    const hubNode = {
+    const iotaHub = {
       data: {
-        id: HUB_ID,
-        label: "SignalForge",
-        handle: "core",
+        id: HUB_IOTA,
+        label: "IOTA",
+        handle: "center",
         category: AccountCategory.ECOSYSTEM,
-        postCount: posts.length,
+        postCount: posts.filter((post) => post.center === "IOTA").length,
         recentPostCount,
         influence: Math.max(100, Math.round(maxInfluence * 0.35)),
-        color: "#f5b84d",
-        size: 86,
+        color: "#52a7ff",
+        size: centerFocus === "IOTA" ? 90 : 78,
       },
-      classes: "hub",
+      classes: centerFocus === "IOTA" ? "hub hub-active" : "hub",
+    };
+
+    const twinHub = {
+      data: {
+        id: HUB_TWIN,
+        label: "TWIN",
+        handle: "center",
+        category: AccountCategory.ECOSYSTEM,
+        postCount: posts.filter((post) => post.center === "TWIN").length,
+        recentPostCount,
+        influence: Math.max(100, Math.round(maxInfluence * 0.32)),
+        color: "#f5b84d",
+        size: centerFocus === "TWIN" ? 90 : 78,
+      },
+      classes: centerFocus === "TWIN" ? "hub hub-active" : "hub",
     };
 
     const edgeEls = network.edges.map((edge) => {
@@ -174,20 +193,45 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
       };
     });
 
-    const hubEdges = network.nodes.map((node) => ({
-      data: {
-        id: `hub-${node.id}`,
-        source: HUB_ID,
-        target: node.id,
-        weight: 0.6,
-        narrativeCount: 0,
-        color: "#314867",
+    const hubEdges = network.nodes.flatMap((node) => [
+      {
+        data: {
+          id: `hub-iota-${node.id}`,
+          source: HUB_IOTA,
+          target: node.id,
+          weight: node.id === selectedAccountId ? 1.1 : 0.55,
+          narrativeCount: 0,
+          color: "#315579",
+        },
+        classes: "hub-edge",
       },
-      classes: "hub-edge",
-    }));
+      {
+        data: {
+          id: `hub-twin-${node.id}`,
+          source: HUB_TWIN,
+          target: node.id,
+          weight: node.id === selectedAccountId ? 1.1 : 0.55,
+          narrativeCount: 0,
+          color: "#5a4a35",
+        },
+        classes: "hub-edge",
+      },
+    ]);
 
-    return [hubNode, ...nodeEls, ...hubEdges, ...edgeEls];
-  }, [network, maxInfluence, selectedAccountId, posts, recentPostCount]);
+    const bridge = {
+      data: {
+        id: "hub-bridge",
+        source: HUB_IOTA,
+        target: HUB_TWIN,
+        weight: 3,
+        narrativeCount: 0,
+        color: "#8fa3c5",
+      },
+      classes: "hub-bridge",
+    };
+
+    return [iotaHub, twinHub, ...nodeEls, bridge, ...hubEdges, ...edgeEls];
+  }, [network, maxInfluence, selectedAccountId, posts, recentPostCount, centerFocus]);
 
   const setCy = React.useCallback(
     (instance: unknown) => {
@@ -200,14 +244,15 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
 
       cy.on("mouseover", "node", (event) => {
         const id = event.target.id();
-        if (id === HUB_ID) {
+        if (id === HUB_IOTA || id === HUB_TWIN) {
+          const centerName: IntelligenceCenter = id === HUB_IOTA ? "IOTA" : "TWIN";
           setHovered({
             id,
-            label: "SignalForge",
-            handle: "core",
+            label: centerName,
+            handle: "center",
             category: AccountCategory.ECOSYSTEM,
             influence: Math.round(network.nodes.reduce((sum, n) => sum + n.influenceScore, 0)),
-            postCount: posts.length,
+            postCount: posts.filter((post) => post.center === centerName).length,
             recentPostCount,
           });
           return;
@@ -233,7 +278,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
 
       cy.on("tap", "node", (event) => {
         const id = event.target.id();
-        if (id === HUB_ID) {
+        if (id === HUB_IOTA || id === HUB_TWIN) {
           onSelectAccount("all");
           return;
         }
@@ -253,7 +298,9 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
     <Card className="border-border/70 bg-card/70">
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Account interaction constellation</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+            {centerFocus} center constellation · {sourceTab === "X" ? "X" : "LinkedIn"}
+          </CardTitle>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/50 px-2 py-0.5">
               <UserRound className="size-3" /> {network.nodes.length} nodes
@@ -314,14 +361,19 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
               {
                 selector: "node.hub",
                 style: {
-                  "background-color": "#0a0d18",
+                  "background-color": "#090f1c",
                   "border-width": 3,
-                  "border-color": "#f5b84d",
-                  "font-size": 10,
+                  "font-size": 11,
+                  "font-weight": 700,
                   "text-margin-y": 12,
-                  "shadow-color": "#f5b84d",
-                  "shadow-opacity": 0.7,
-                  "shadow-blur": 22,
+                  "shadow-opacity": 0.8,
+                  "shadow-blur": 24,
+                },
+              },
+              {
+                selector: "node.hub-active",
+                style: {
+                  "border-color": "#ffffff",
                 },
               },
               {
@@ -344,8 +396,16 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
                 selector: "edge.hub-edge",
                 style: {
                   width: 1,
-                  opacity: 0.24,
+                  opacity: 0.22,
                   "line-style": "dotted",
+                },
+              },
+              {
+                selector: "edge.hub-bridge",
+                style: {
+                  width: 2,
+                  opacity: 0.5,
+                  "line-style": "solid",
                 },
               },
             ]}
@@ -354,7 +414,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
 
         <div className="grid gap-2 lg:grid-cols-[1fr_auto]">
           <div className="rounded border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground">
-            Hover any node for context. Click a node to filter the feed by that account.
+            Hover a node for details. Click account nodes to filter feed. IOTA + TWIN hubs stay centered.
           </div>
           <button
             onClick={() => onSelectAccount("all")}

@@ -1,5 +1,14 @@
 import { AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client";
-import type { DashboardAccount, DashboardPayload, DashboardPost, DashboardStats, IngestionRunPreview, TerminalSystemStatus } from "@/lib/types";
+import type {
+  DashboardAccount,
+  DashboardPayload,
+  DashboardPost,
+  DashboardStats,
+  IngestionRunPreview,
+  IntelligenceCenter,
+  SourcePlatform,
+  TerminalSystemStatus,
+} from "@/lib/types";
 
 type BuildDemoOptions = {
   dbCode: TerminalSystemStatus["dbCode"];
@@ -7,122 +16,135 @@ type BuildDemoOptions = {
 };
 
 const DEMO_ACCOUNTS: DashboardAccount[] = [
-  { id: "a1", displayName: "OpenAI", handle: "OpenAI", category: AccountCategory.ECOSYSTEM, tags: ["launch", "models"] },
-  { id: "a2", displayName: "Anthropic", handle: "AnthropicAI", category: AccountCategory.COMPETITOR, tags: ["safety", "enterprise"] },
-  { id: "a3", displayName: "Messari", handle: "MessariCrypto", category: AccountCategory.MEDIA, tags: ["research", "macro"] },
-  { id: "a4", displayName: "a16z crypto", handle: "a16zcrypto", category: AccountCategory.ECOSYSTEM, tags: ["ecosystem", "funding"] },
-  { id: "a5", displayName: "Vitalik Buterin", handle: "VitalikButerin", category: AccountCategory.FOUNDER, tags: ["protocol", "roadmap"] },
-  { id: "a6", displayName: "The Defiant", handle: "DefiantNews", category: AccountCategory.MEDIA, tags: ["coverage", "narrative"] },
-  { id: "a7", displayName: "LayerZero", handle: "LayerZero_Core", category: AccountCategory.COMPETITOR, tags: ["bridges", "liquidity"] },
-  { id: "a8", displayName: "Ryan Selkis", handle: "twobitidiot", category: AccountCategory.INFLUENCER, tags: ["sentiment", "hot-take"] },
-  { id: "a9", displayName: "Paradigm", handle: "paradigm", category: AccountCategory.ECOSYSTEM, tags: ["infra", "rollups"] },
-  { id: "a10", displayName: "Bankless", handle: "BanklessHQ", category: AccountCategory.MEDIA, tags: ["podcast", "distribution"] },
+  { id: "a1", displayName: "IOTA Foundation", handle: "iota", category: AccountCategory.ECOSYSTEM, tags: ["iota", "ecosystem"] },
+  { id: "a2", displayName: "Twin Labs", handle: "twinlabs", category: AccountCategory.ECOSYSTEM, tags: ["twin", "ecosystem"] },
+  { id: "a3", displayName: "OpenAI", handle: "OpenAI", category: AccountCategory.COMPETITOR, tags: ["agents", "models"] },
+  { id: "a4", displayName: "Messari", handle: "MessariCrypto", category: AccountCategory.MEDIA, tags: ["research", "macro"] },
+  { id: "a5", displayName: "a16z crypto", handle: "a16zcrypto", category: AccountCategory.ECOSYSTEM, tags: ["venture", "infra"] },
+  { id: "a6", displayName: "Vitalik Buterin", handle: "VitalikButerin", category: AccountCategory.FOUNDER, tags: ["governance", "protocol"] },
+  { id: "a7", displayName: "The Defiant", handle: "DefiantNews", category: AccountCategory.MEDIA, tags: ["narrative", "coverage"] },
+  { id: "a8", displayName: "LayerZero", handle: "LayerZero_Core", category: AccountCategory.COMPETITOR, tags: ["bridges", "liquidity"] },
+  { id: "a9", displayName: "Ryan Selkis", handle: "twobitidiot", category: AccountCategory.INFLUENCER, tags: ["sentiment", "analysis"] },
+  { id: "a10", displayName: "Bankless", handle: "BanklessHQ", category: AccountCategory.MEDIA, tags: ["distribution", "community"] },
 ];
 
-const FEED_TEMPLATES: Array<{ accountId: string; text: string; summary: string; tags: string[] }> = [
+const TEMPLATES: Array<{ accountId: string; center: IntelligenceCenter; text: string; summary: string; tags: string[] }> = [
   {
     accountId: "a1",
-    text: "We just rolled out a lightweight reasoning mode focused on latency-sensitive tasks. Early enterprise testers report stronger reliability for fast-turn workflows.",
-    summary:
-      "This can pull developer attention toward low-latency agents and raises the bar for response quality under strict time constraints.",
-    tags: ["ecosystem", "latency", "product"],
+    center: "IOTA",
+    text: "IOTA ecosystem teams are coordinating on wallet-level attribution primitives for creator campaigns.",
+    summary: "Strong distribution signal for IOTA-aligned outreach and ecosystem amplification.",
+    tags: ["ecosystem", "distribution", "opportunity"],
   },
   {
     accountId: "a2",
-    text: "Policy update: expanded constitutional guardrail tooling for enterprise tenants, now with domain-scoped policy bundles.",
-    summary:
-      "Signals enterprise compliance positioning and could influence procurement decisions for regulated buyers.",
-    tags: ["competitor", "policy", "enterprise"],
-  },
-  {
-    accountId: "a3",
-    text: "Flows to modular L2 infra accelerated this week while memecoin attention cooled. Desk behavior suggests rotation into utility narratives.",
-    summary:
-      "Narrative rotation is underway; engagement strategy should prioritize utility and infra creators over pure hype channels.",
-    tags: ["media", "flows", "rotation"],
+    center: "TWIN",
+    text: "Twin stack is pushing fast-turn execution tooling and narrative monitoring hooks this week.",
+    summary: "Execution thread with immediate engagement potential for teams seeking realtime ops.",
+    tags: ["execution", "tooling", "engage-now"],
   },
   {
     accountId: "a4",
-    text: "Founder teams shipping weekly devlogs are compounding trust faster than teams posting milestone-only updates. Distribution cadence matters.",
-    summary:
-      "Operator takeaway: reward predictable shipping narratives. This is a direct signal for who to engage and amplify.",
-    tags: ["ecosystem", "distribution", "engage-now"],
+    center: "IOTA",
+    text: "Research desks report liquidity rotation into utility narratives anchored by infra-first chains.",
+    summary: "Narrative regime shift; useful for IOTA positioning and media response.",
+    tags: ["liquidity", "media", "high-signal"],
   },
   {
     accountId: "a5",
-    text: "Rollup economics discussion: sequencer fee dynamics still underpriced in many governance frameworks.",
-    summary:
-      "High-value policy thread for protocol teams; likely to shape upcoming governance debate and thought leadership cycles.",
-    tags: ["founder", "governance", "high-signal"],
+    center: "TWIN",
+    text: "Ecosystem founders prioritize weekly shipping logs over milestone-only updates to sustain trust.",
+    summary: "Direct operator guidance for Twin comms cadence and engagement sequencing.",
+    tags: ["founder", "execution", "cadence"],
   },
   {
     accountId: "a6",
-    text: "Breaking: two major teams are coordinating around shared wallet standards for social-driven attribution.",
-    summary:
-      "Standardization narratives create partnership windows; this is likely an engagement opportunity for tooling teams.",
-    tags: ["media", "partnership", "opportunity"],
-  },
-  {
-    accountId: "a7",
-    text: "Cross-chain liquidity incentives now weighted by retention, not just first-bridge volume. Mercenary flow gets penalized.",
-    summary:
-      "Competitor strategy shift: retention-first mechanics may redirect liquidity conversations over the next cycle.",
-    tags: ["competitor", "liquidity", "retention"],
+    center: "IOTA",
+    text: "Governance proposals are increasingly fee-sensitivity aware and tied to retention metrics.",
+    summary: "Policy narrative worth monitoring closely across protocol and ecosystem accounts.",
+    tags: ["governance", "policy", "signal"],
   },
   {
     accountId: "a8",
-    text: "Sentiment is peaking in AI-agent discourse but conviction is thin. Watch who actually ships pipelines this week.",
-    summary:
-      "Useful challenge signal: ignore broad hype and track execution receipts. Good trigger for selective engagement.",
-    tags: ["influencer", "sentiment", "execution"],
-  },
-  {
-    accountId: "a9",
-    text: "New OSS release focused on proving-time improvements for zk-friendly app primitives.",
-    summary:
-      "Technical momentum thread with high downstream impact for infra narratives and developer ecosystem attention.",
-    tags: ["ecosystem", "infra", "zk"],
+    center: "TWIN",
+    text: "Competitor incentive design is pivoting from first-touch volume toward retained usage quality.",
+    summary: "Competitive repositioning opens messaging and product differentiation opportunities.",
+    tags: ["competitor", "retention", "opportunity"],
   },
   {
     accountId: "a10",
-    text: "Tonight: live panel on where social distribution beats paid growth in crypto product launches.",
-    summary:
-      "Strong short-term engagement opportunity if the team wants rapid mindshare in creator-heavy channels.",
-    tags: ["media", "distribution", "opportunity"],
+    center: "IOTA",
+    text: "Creator-led distribution channels are outperforming paid growth in this cycle.",
+    summary: "Engagement queue candidate for IOTA ecosystem growth operators.",
+    tags: ["distribution", "media", "engage-now"],
+  },
+  {
+    accountId: "a3",
+    center: "TWIN",
+    text: "Model vendors are emphasizing reliability under constrained latency over benchmark theatrics.",
+    summary: "Execution-quality narrative aligns with Twin’s command-center positioning.",
+    tags: ["competitor", "latency", "execution"],
   },
 ];
 
+function channelize(text: string, summary: string, platform: SourcePlatform) {
+  if (platform === "X") {
+    return { text, summary };
+  }
+
+  return {
+    text: `${text}\n\nOperators are now asking for practical workflows, not just sentiment snapshots.`,
+    summary: `${summary} LinkedIn audiences are discussing implementation playbooks, so this is suitable for strategic response content.`,
+  };
+}
+
 function buildDemoPosts(now: Date): DashboardPost[] {
-  return FEED_TEMPLATES.map((template, index) => {
+  const platforms: SourcePlatform[] = ["X", "LINKEDIN"];
+  const posts: DashboardPost[] = [];
+
+  TEMPLATES.forEach((template, index) => {
     const account = DEMO_ACCOUNTS.find((item) => item.id === template.accountId)!;
-    const minutesAgo = 8 + index * 17;
-    const postedAt = new Date(now.getTime() - minutesAgo * 60 * 1000);
 
-    const likeCount = 40 + (index * 39) % 410;
-    const replyCount = 6 + (index * 11) % 64;
-    const repostCount = 5 + (index * 17) % 120;
-    const quoteCount = 1 + (index * 7) % 28;
+    platforms.forEach((platform, platformIndex) => {
+      const minutesAgo = 12 + index * 19 + platformIndex * 7;
+      const postedAt = new Date(now.getTime() - minutesAgo * 60 * 1000);
+      const likeCount = 35 + ((index + 3) * 44 + platformIndex * 11) % 420;
+      const replyCount = 5 + ((index + 2) * 13 + platformIndex * 3) % 64;
+      const repostCount = 4 + ((index + 5) * 17 + platformIndex * 4) % 120;
+      const quoteCount = 1 + ((index + 1) * 5 + platformIndex * 2) % 24;
 
-    return {
-      id: `demo-post-${index + 1}`,
-      provider: SocialProvider.X,
-      accountId: account.id,
-      externalPostId: `demo-ext-${index + 1}`,
-      content: template.text,
-      postedAt,
-      fetchedAt: new Date(now.getTime() - Math.max(1, minutesAgo - 2) * 60 * 1000),
-      sourceUrl: `https://x.com/${account.handle}/status/demo-${index + 1}`,
-      likeCount,
-      replyCount,
-      repostCount,
-      quoteCount,
-      account,
-      summary: {
-        summary: template.summary,
-        model: "demo-curated",
-      },
-    };
-  }).sort((a, b) => b.postedAt.getTime() - a.postedAt.getTime());
+      const channel = channelize(template.text, template.summary, platform);
+      const id = `demo-${platform.toLowerCase()}-${index + 1}`;
+      const sourceUrl =
+        platform === "X"
+          ? `https://x.com/${account.handle}/status/${id}`
+          : `https://www.linkedin.com/feed/update/${id}`;
+
+      posts.push({
+        id,
+        provider: SocialProvider.X,
+        accountId: account.id,
+        externalPostId: `ext-${id}`,
+        content: channel.text,
+        postedAt,
+        fetchedAt: new Date(postedAt.getTime() + 3 * 60 * 1000),
+        sourceUrl,
+        likeCount,
+        replyCount,
+        repostCount,
+        quoteCount,
+        sourcePlatform: platform,
+        center: template.center,
+        account,
+        summary: {
+          summary: channel.summary,
+          model: "demo-curated",
+        },
+      });
+    });
+  });
+
+  return posts.sort((a, b) => b.postedAt.getTime() - a.postedAt.getTime());
 }
 
 function buildStats(posts: DashboardPost[]): DashboardStats {
@@ -155,16 +177,16 @@ function buildRuns(now: Date): IngestionRunPreview[] {
     {
       id: "demo-run-1",
       status: IngestionStatus.PARTIAL,
-      startedAt: new Date(now.getTime() - 14 * 60 * 1000),
-      finishedAt: new Date(now.getTime() - 13 * 60 * 1000),
-      notes: "Provider reachable. Database unavailable, serving demo stream.",
+      startedAt: new Date(now.getTime() - 16 * 60 * 1000),
+      finishedAt: new Date(now.getTime() - 15 * 60 * 1000),
+      notes: "Source streams active. Demo mode enabled while DB is offline.",
     },
     {
       id: "demo-run-2",
       status: IngestionStatus.SUCCESS,
-      startedAt: new Date(now.getTime() - 49 * 60 * 1000),
-      finishedAt: new Date(now.getTime() - 48 * 60 * 1000),
-      notes: "Mock ingest simulation completed.",
+      startedAt: new Date(now.getTime() - 52 * 60 * 1000),
+      finishedAt: new Date(now.getTime() - 51 * 60 * 1000),
+      notes: "Network graph data prepared for X + LinkedIn tabs.",
     },
   ];
 }
@@ -183,7 +205,7 @@ export function buildDemoPayload(options: BuildDemoOptions): DashboardPayload {
       mode: "DEMO",
       dbCode: options.dbCode,
       dbMessage: options.dbMessage,
-      providerLabel: "X (mock provider)",
+      providerLabel: "X + LinkedIn demo streams",
       summaryLabel: process.env.OPENAI_API_KEY ? "OpenAI + fallback" : "Heuristic fallback",
       cadenceLabel: "Manual ingest + /api/ingest scheduler",
       lastRefreshAt: now,

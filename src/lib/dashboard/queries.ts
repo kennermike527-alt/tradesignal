@@ -3,7 +3,25 @@ import { subHours } from "date-fns";
 import { db } from "@/lib/db";
 import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
-import type { DashboardPayload, DashboardPost, DashboardStats } from "@/lib/types";
+import type { DashboardPayload, DashboardPost, DashboardStats, IntelligenceCenter, SourcePlatform } from "@/lib/types";
+
+function pickCenter(postText: string, handle: string): IntelligenceCenter {
+  const text = `${postText} ${handle}`.toLowerCase();
+  if (text.includes("iota")) return "IOTA";
+  if (text.includes("twin")) return "TWIN";
+
+  const parity = handle
+    .split("")
+    .reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2;
+
+  return parity === 0 ? "IOTA" : "TWIN";
+}
+
+function detectSourcePlatform(sourceUrl: string): SourcePlatform {
+  const lower = sourceUrl.toLowerCase();
+  if (lower.includes("linkedin.com")) return "LINKEDIN";
+  return "X";
+}
 
 function buildStats(posts: DashboardPost[], activeAccounts: number, latestStatus: IngestionStatus | null, latestAt: Date | null): DashboardStats {
   const now = Date.now();
@@ -96,22 +114,29 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       }),
     ]);
 
-    const posts: DashboardPost[] = postsRaw.map((post) => ({
-      id: post.id,
-      provider: post.provider,
-      externalPostId: post.externalPostId,
-      accountId: post.accountId,
-      content: post.content,
-      postedAt: post.postedAt,
-      fetchedAt: post.fetchedAt,
-      sourceUrl: post.sourceUrl,
-      likeCount: post.likeCount,
-      replyCount: post.replyCount,
-      repostCount: post.repostCount,
-      quoteCount: post.quoteCount ?? 0,
-      account: post.account,
-      summary: post.summary,
-    }));
+    const posts: DashboardPost[] = postsRaw.map((post) => {
+      const sourcePlatform = detectSourcePlatform(post.sourceUrl);
+      const center = pickCenter(`${post.content} ${post.summary?.summary ?? ""}`, post.account.handle);
+
+      return {
+        id: post.id,
+        provider: post.provider,
+        externalPostId: post.externalPostId,
+        accountId: post.accountId,
+        content: post.content,
+        postedAt: post.postedAt,
+        fetchedAt: post.fetchedAt,
+        sourceUrl: post.sourceUrl,
+        likeCount: post.likeCount,
+        replyCount: post.replyCount,
+        repostCount: post.repostCount,
+        quoteCount: post.quoteCount ?? 0,
+        sourcePlatform,
+        center,
+        account: post.account,
+        summary: post.summary,
+      };
+    });
 
     const stats = buildStats(
       posts,

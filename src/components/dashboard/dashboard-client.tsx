@@ -21,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { AccountCategory } from "@prisma/client";
-import type { DashboardPayload, DashboardPost } from "@/lib/types";
+import type { DashboardPayload, DashboardPost, IntelligenceCenter, SourcePlatform } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,6 @@ type Props = {
 };
 
 type TimeWindow = "2h" | "24h" | "72h" | "7d" | "all";
-
 type WatchlistKey = "all" | "priority" | "competitors" | "founders" | "media" | "ecosystem";
 
 const watchlists: Array<{ key: WatchlistKey; label: string; description: string }> = [
@@ -55,6 +54,8 @@ const narrativePatterns = [
   { id: "distribution", label: "Distribution", test: /distribution|growth|audience|reach/i },
 ];
 
+const centers: IntelligenceCenter[] = ["IOTA", "TWIN"];
+const sources: SourcePlatform[] = ["X", "LINKEDIN"];
 const numberFmt = new Intl.NumberFormat();
 
 function engagementScore(post: DashboardPost) {
@@ -96,7 +97,10 @@ function dbTone(code: DashboardPayload["system"]["dbCode"]) {
 }
 
 export function DashboardClient({ payload }: Props) {
-  const { posts, accounts, categories, stats, ingestionRuns, system } = payload;
+  const { posts, categories, ingestionRuns, system } = payload;
+
+  const [centerFocus, setCenterFocus] = React.useState<IntelligenceCenter>("IOTA");
+  const [sourceTab, setSourceTab] = React.useState<SourcePlatform>("X");
 
   const [watchlist, setWatchlist] = React.useState<WatchlistKey>("all");
   const [accountId, setAccountId] = React.useState<string>("all");
@@ -112,19 +116,55 @@ export function DashboardClient({ payload }: Props) {
   const [assignedPostIds, setAssignedPostIds] = React.useState<string[]>([]);
   const [taggedPostIds, setTaggedPostIds] = React.useState<string[]>([]);
 
+  const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
+
+  const sourceScopedPosts = React.useMemo(
+    () => centerScopedPosts.filter((post) => post.sourcePlatform === sourceTab),
+    [centerScopedPosts, sourceTab]
+  );
+
+  const sourceScopedAccounts = React.useMemo(() => {
+    const ids = new Set(sourceScopedPosts.map((post) => post.accountId));
+    return [...new Map(sourceScopedPosts.map((post) => [post.accountId, post.account])).values()].filter((acc) => ids.has(acc.id));
+  }, [sourceScopedPosts]);
+
+  React.useEffect(() => {
+    if (accountId === "all") return;
+    const exists = sourceScopedAccounts.some((acc) => acc.id === accountId);
+    if (!exists) setAccountId("all");
+  }, [accountId, sourceScopedAccounts]);
+
+  const scopedReferenceTime = React.useMemo(
+    () => sourceScopedPosts.reduce((maxTs, post) => Math.max(maxTs, post.postedAt.getTime()), system.lastRefreshAt.getTime()),
+    [sourceScopedPosts, system.lastRefreshAt]
+  );
+
+  const scopedStats = React.useMemo(() => {
+    const in2h = scopedReferenceTime - 2 * 60 * 60 * 1000;
+    const in24h = scopedReferenceTime - 24 * 60 * 60 * 1000;
+
+    return {
+      trackedAccounts: sourceScopedAccounts.length,
+      newPosts2h: sourceScopedPosts.filter((post) => post.postedAt.getTime() >= in2h).length,
+      newPosts24h: sourceScopedPosts.filter((post) => post.postedAt.getTime() >= in24h).length,
+      highSignalPosts: sourceScopedPosts.filter(isHighSignal).length,
+      opportunitiesDetected: sourceScopedPosts.filter(isOpportunity).length,
+    };
+  }, [sourceScopedAccounts, sourceScopedPosts, scopedReferenceTime]);
+
   const narrativeCounts = React.useMemo(() => {
     return narrativePatterns
       .map((pattern) => ({
         id: pattern.id,
         label: pattern.label,
-        count: posts.filter((post) => pattern.test.test(`${post.content} ${post.summary?.summary ?? ""}`)).length,
+        count: sourceScopedPosts.filter((post) => pattern.test.test(`${post.content} ${post.summary?.summary ?? ""}`)).length,
       }))
       .filter((item) => item.count > 0)
       .sort((a, b) => b.count - a.count);
-  }, [posts]);
+  }, [sourceScopedPosts]);
 
   const filtered = React.useMemo(() => {
-    return posts
+    return sourceScopedPosts
       .filter((post) => watchlistMatch(post, watchlist))
       .filter((post) => (accountId === "all" ? true : post.accountId === accountId))
       .filter((post) => (category === "all" ? true : post.account.category === category))
@@ -148,7 +188,7 @@ export function DashboardClient({ payload }: Props) {
       })
       .sort((a, b) => b.postedAt.getTime() - a.postedAt.getTime());
   }, [
-    posts,
+    sourceScopedPosts,
     watchlist,
     accountId,
     category,
@@ -174,7 +214,7 @@ export function DashboardClient({ payload }: Props) {
 
   const priorityMentions = React.useMemo(() => {
     return [...filtered]
-      .filter((post) => post.account.tags.some((tag) => ["launch", "policy", "founder", "ecosystem"].includes(tag)))
+      .filter((post) => post.account.tags.some((tag) => ["launch", "policy", "founder", "ecosystem", "iota", "twin"].includes(tag)))
       .slice(0, 6);
   }, [filtered]);
 
@@ -209,7 +249,7 @@ export function DashboardClient({ payload }: Props) {
                 <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
                   <Radar className="size-3.5" /> tradesignal // signalforge terminal
                 </p>
-                <h1 className="text-lg font-semibold leading-tight sm:text-xl">Real-time social intelligence command center</h1>
+                <h1 className="text-lg font-semibold leading-tight sm:text-xl">{centerFocus} intelligence command center</h1>
               </div>
               <ManualIngestButton compact />
             </div>
@@ -219,7 +259,7 @@ export function DashboardClient({ payload }: Props) {
                 <Activity className="size-3" /> {system.mode} · {system.dbCode}
               </span>
               <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-0.5">
-                <Layers className="size-3" /> Source: {system.providerLabel}
+                <Layers className="size-3" /> Streams: X + LinkedIn tabs
               </span>
               <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-0.5">
                 <Bot className="size-3" /> Summaries: {system.summaryLabel}
@@ -227,6 +267,42 @@ export function DashboardClient({ payload }: Props) {
               <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-0.5">
                 <Clock3 className="size-3" /> Refresh: {system.lastRefreshAt.toLocaleTimeString()} ({system.cadenceLabel})
               </span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <div className="inline-flex rounded border border-border/70 bg-background/50 p-0.5 text-xs">
+                {centers.map((center) => (
+                  <button
+                    key={center}
+                    onClick={() => {
+                      setCenterFocus(center);
+                      setAccountId("all");
+                    }}
+                    className={`rounded px-2 py-1 ${
+                      centerFocus === center ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {center} dashboard
+                  </button>
+                ))}
+              </div>
+
+              <div className="inline-flex rounded border border-border/70 bg-background/50 p-0.5 text-xs">
+                {sources.map((source) => (
+                  <button
+                    key={source}
+                    onClick={() => {
+                      setSourceTab(source);
+                      setAccountId("all");
+                    }}
+                    className={`rounded px-2 py-1 ${
+                      sourceTab === source ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {source === "X" ? "X" : "LinkedIn"}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {system.mode === "DEMO" ? (
@@ -240,21 +316,21 @@ export function DashboardClient({ payload }: Props) {
         <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded border border-border/70 bg-card/70 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Tracked accounts</p>
-            <p className="text-lg font-semibold">{numberFmt.format(stats.trackedAccounts)}</p>
+            <p className="text-lg font-semibold">{numberFmt.format(scopedStats.trackedAccounts)}</p>
           </div>
           <div className="rounded border border-border/70 bg-card/70 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">New posts (2h / 24h)</p>
             <p className="text-lg font-semibold">
-              {numberFmt.format(stats.newPosts2h)} / {numberFmt.format(stats.newPosts24h)}
+              {numberFmt.format(scopedStats.newPosts2h)} / {numberFmt.format(scopedStats.newPosts24h)}
             </p>
           </div>
           <div className="rounded border border-border/70 bg-card/70 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">High-signal posts</p>
-            <p className="text-lg font-semibold">{numberFmt.format(stats.highSignalPosts)}</p>
+            <p className="text-lg font-semibold">{numberFmt.format(scopedStats.highSignalPosts)}</p>
           </div>
           <div className="rounded border border-border/70 bg-card/70 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Opportunities detected</p>
-            <p className="text-lg font-semibold">{numberFmt.format(stats.opportunitiesDetected)}</p>
+            <p className="text-lg font-semibold">{numberFmt.format(scopedStats.opportunitiesDetected)}</p>
           </div>
         </section>
 
@@ -266,7 +342,7 @@ export function DashboardClient({ payload }: Props) {
               </CardHeader>
               <CardContent className="space-y-1 p-2 pt-0">
                 {watchlists.map((item) => {
-                  const count = posts.filter((post) => watchlistMatch(post, item.key)).length;
+                  const count = sourceScopedPosts.filter((post) => watchlistMatch(post, item.key)).length;
                   const active = item.key === watchlist;
                   return (
                     <button
@@ -336,9 +412,11 @@ export function DashboardClient({ payload }: Props) {
 
           <section className="space-y-2">
             <NetworkMap
-              posts={posts}
-              accounts={accounts}
+              posts={sourceScopedPosts}
+              accounts={sourceScopedAccounts}
               selectedAccountId={accountId}
+              centerFocus={centerFocus}
+              sourceTab={sourceTab}
               onSelectAccount={handleGraphSelectAccount}
             />
 
@@ -352,7 +430,7 @@ export function DashboardClient({ payload }: Props) {
                     className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
                   >
                     <option value="all">All accounts</option>
-                    {accounts.map((account) => (
+                    {sourceScopedAccounts.map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.displayName}
                       </option>
@@ -460,7 +538,13 @@ export function DashboardClient({ payload }: Props) {
             </div>
 
             <div className="max-h-[calc(100vh-300px)] space-y-2 overflow-y-auto pr-1">
-              {filtered.length === 0 ? (
+              {sourceScopedPosts.length === 0 ? (
+                <Card className="border-border/70 bg-card/70">
+                  <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                    No {sourceTab === "X" ? "X" : "LinkedIn"} stream data yet for {centerFocus}. Ingest or switch tab.
+                  </CardContent>
+                </Card>
+              ) : filtered.length === 0 ? (
                 <Card className="border-border/70 bg-card/70">
                   <CardContent className="py-8 text-center text-sm text-muted-foreground">
                     No signals match current filters. Reset filters or broaden your watchlist.
@@ -482,6 +566,9 @@ export function DashboardClient({ payload }: Props) {
                               <span className="text-[11px] text-muted-foreground">@{post.account.handle}</span>
                               <Badge variant="outline" className="text-[10px]">
                                 {toTitleCase(post.account.category)}
+                              </Badge>
+                              <Badge variant="secondary" className="text-[10px]">
+                                {post.sourcePlatform === "X" ? "X" : "LinkedIn"}
                               </Badge>
                               {highSignal ? (
                                 <Badge className="border-0 bg-rose-500/15 text-[10px] text-rose-300">high velocity</Badge>

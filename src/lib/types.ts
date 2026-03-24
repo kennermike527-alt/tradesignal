@@ -2,6 +2,9 @@ import type { Account, AccountCategory, IngestionStatus, SocialProvider } from "
 
 export type TrackedAccount = Pick<Account, "id" | "displayName" | "handle" | "category" | "tags" | "isActive" | "provider">;
 
+export type IntelligenceCenter = "IOTA" | "TWIN";
+export type SourcePlatform = "X" | "LINKEDIN";
+
 export type NormalizedSocialPost = {
   provider: SocialProvider;
   externalPostId: string;
@@ -36,6 +39,8 @@ export type DashboardPost = {
   replyCount: number;
   repostCount: number;
   quoteCount: number;
+  sourcePlatform: SourcePlatform;
+  center: IntelligenceCenter;
   account: DashboardAccount;
   summary: {
     summary: string;
