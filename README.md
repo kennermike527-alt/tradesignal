@@ -33,6 +33,12 @@ This is not an admin panel and not a KPI-first dashboard. The core object is the
    - AI "Why this matters"
    - tactical affordances: save / assign / tag
 
+### Multi-dashboard routing
+
+- Primary center tabs: **IOTA** and **TWIN**
+- Source tabs inside each center: **X** and **LinkedIn**
+- Network constellation keeps both hubs visible while the active center/source tab drives feed + panel scope.
+
 4. **Right intelligence sidebar**
    - engage-now queue
    - emerging narratives
