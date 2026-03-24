@@ -19,12 +19,16 @@ export function ManualIngestButton() {
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex w-full max-w-xs flex-col gap-2 sm:w-auto">
       <Button onClick={onRun} disabled={pending} className="gap-2">
         <RefreshCw className={pending ? "size-4 animate-spin" : "size-4"} />
         {pending ? "Running ingestion..." : "Run ingestion now"}
       </Button>
-      {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
+      {message ? (
+        <p className="rounded-md border border-border/70 bg-background/50 px-2 py-1 text-xs text-muted-foreground">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }

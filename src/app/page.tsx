@@ -16,9 +16,11 @@ export default async function DashboardPage() {
         <DashboardHeader providerLabel={SocialProvider.X} />
         <StatsStrip stats={payload.stats} />
 
-        <section className="grid gap-4 lg:grid-cols-[1fr_300px]">
+        <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
           <DashboardClient posts={payload.posts} accounts={payload.accounts} categories={payload.categories} />
-          <IngestionRunsPanel runs={payload.ingestionRuns} />
+          <div className="space-y-4 lg:sticky lg:top-4 lg:h-fit">
+            <IngestionRunsPanel runs={payload.ingestionRuns} />
+          </div>
         </section>
       </div>
     </main>

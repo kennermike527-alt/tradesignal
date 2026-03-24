@@ -34,8 +34,9 @@ export function IngestionRunsPanel({ runs }: Props) {
             <div key={run.id} className="rounded-md border border-border/70 bg-muted/20 p-3 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className={`font-semibold ${STATUS_TONE[run.status]}`}>{run.status}</span>
-                <span className="text-muted-foreground">{new Date(run.startedAt).toLocaleString()}</span>
+                <span className="text-muted-foreground">{new Date(run.startedAt).toLocaleTimeString()}</span>
               </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">{new Date(run.startedAt).toLocaleString()}</p>
               {run.notes ? <p className="mt-1 text-muted-foreground">{run.notes}</p> : null}
             </div>
           ))
