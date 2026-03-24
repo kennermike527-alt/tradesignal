@@ -15,12 +15,39 @@ function isAuthorized(request: NextRequest) {
   return [bearer, querySecret, headerSecret].some((candidate) => candidate && candidate === secret);
 }
 
+function apiMessageFromCode(code: string) {
+  if (code === "DB_URL_MISSING") {
+    return "DATABASE_URL missing. Configure database before running ingestion.";
+  }
+
+  if (code === "DB_UNREACHABLE") {
+    return "Database unreachable. Validate DATABASE_URL and database availability.";
+  }
+
+  if (code === "INGESTION_FAILURE") {
+    return "Ingestion failed during processing.";
+  }
+
+  return "Ingestion failed.";
+}
+
 async function handleIngest(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   const result = await ingestLatestPosts({ initiatedBy: "cron", generateSummaries: true });
+
+  if (result.status === "FAILED") {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: result.errorCode,
+        message: apiMessageFromCode(result.errorCode),
+      },
+      { status: 503 }
+    );
+  }
 
   return NextResponse.json({ ok: true, result });
 }

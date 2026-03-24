@@ -1,293 +1,247 @@
-# tradesignal (SignalForge)
+# tradesignal // SignalForge Terminal
 
-SignalForge is a real-time social intelligence dashboard built on Next.js App Router.
+`tradesignal` is a **real-time social intelligence terminal** for monitoring narrative shifts and making engagement decisions.
 
-V1 monitors a curated watchlist of X accounts, ingests recent posts on a recurring schedule, deduplicates + stores normalized post data in Postgres, and surfaces short AI summaries explaining why each post matters.
+This is not an admin panel and not a KPI-first dashboard. The core object is the live feed of posts/signals:
+
+- what changed
+- why it matters
+- what deserves action
+- who to engage with
 
 ---
 
-## Tech stack
+## Product direction (V1.5)
+
+### Information hierarchy
+
+1. **Top command bar**
+   - system mode (LIVE/DEMO)
+   - database state
+   - provider/source status
+   - refresh cadence
+   - manual ingest action
+
+2. **Left command sidebar**
+   - watchlists
+   - narrative filters
+   - saved-view shortcuts
+
+3. **Main center feed (dominant surface)**
+   - dense, scrollable post intelligence cards
+   - account/category/time/content/engagement/source
+   - AI "Why this matters"
+   - tactical affordances: save / assign / tag
+
+4. **Right intelligence sidebar**
+   - engage-now queue
+   - emerging narratives
+   - high-velocity posts
+   - priority mentions
+   - compact ingestion-run status
+
+---
+
+## Technical stack
 
 - Next.js (App Router)
 - TypeScript
-- TailwindCSS
-- shadcn/ui-style component system (lightweight local components)
-- Prisma + Postgres
-- OpenAI API (summary generation)
-- Scheduler-friendly ingestion endpoint (`/api/ingest`)
+- Tailwind CSS
+- Local UI primitives (shadcn-style)
+- Prisma + PostgreSQL
+- OpenAI summaries (optional) + deterministic fallback
 
 ---
 
-## Architecture
+## Current architecture
 
 ```text
 src/
   app/
-    api/ingest/route.ts       # scheduler/manual HTTP ingestion trigger
-    actions.ts                # server action for manual ingestion button
+    api/ingest/route.ts
+    actions.ts
+    page.tsx
     layout.tsx
-    page.tsx                  # dashboard route (/)
+    error.tsx
   components/
     dashboard/
-      dashboard-client.tsx    # filters + post feed UI
-      dashboard-header.tsx
-      ingestion-runs-panel.tsx
+      dashboard-client.tsx
       manual-ingest-button.tsx
-      stats-strip.tsx
     ui/
-      badge.tsx
-      button.tsx
-      card.tsx
-      input.tsx
-      skeleton.tsx
+      badge.tsx button.tsx card.tsx input.tsx skeleton.tsx
   lib/
-    dashboard/queries.ts      # server-side dashboard data loading
-    db.ts                     # prisma singleton
-    ingestion/ingest-service.ts
-    providers/
-      index.ts
-      mock-x-provider.ts
-      social-provider.ts      # provider contract
-    summary/summary-service.ts
+    db.ts
     types.ts
     utils.ts
+    runtime/db-health.ts
+    dashboard/
+      queries.ts
+      demo-payload.ts
+    ingestion/ingest-service.ts
+    providers/
+      social-provider.ts
+      mock-x-provider.ts
+      index.ts
+    summary/summary-service.ts
   scripts/
-    run-ingest.ts             # local CLI ingest run
+    db-setup.ts
+    db-status.ts
+    run-ingest.ts
 
 prisma/
   schema.prisma
+  migrations/
+    0001_init/migration.sql
   seed.ts
 ```
 
-### Separation of concerns
-
-- **Provider abstraction** is isolated under `lib/providers`
-- **Ingestion pipeline** is under `lib/ingestion`
-- **AI summarization** is under `lib/summary`
-- **Database access** is centralized in Prisma + `lib/db.ts`
-- **Dashboard querying** is in `lib/dashboard/queries.ts`
-- **Trigger surfaces** are split between server action (`actions.ts`) and API route (`/api/ingest`)
-
 ---
 
-## Data model (Prisma)
+## Environment setup
 
-### Account
-- id
-- displayName
-- handle
-- category
-- tags (string array)
-- isActive
-- provider
-- createdAt / updatedAt
-
-### Post
-- id
-- externalPostId
-- provider
-- accountId
-- content
-- postedAt
-- sourceUrl
-- likeCount / replyCount / repostCount / quoteCount
-- fetchedAt
-- rawPayload (JSON)
-- createdAt / updatedAt
-
-### PostSummary
-- id
-- postId (unique one-to-one)
-- summary
-- model
-- createdAt / updatedAt
-
-### IngestionRun
-- id
-- provider
-- startedAt / finishedAt
-- status (RUNNING/SUCCESS/PARTIAL/FAILED)
-- notes
-- metadata (JSON)
-- createdAt / updatedAt
-
-### Deduplication
-Posts are deduplicated by `@@unique([provider, externalPostId])`.
-
----
-
-## Setup
-
-### 1) Install
-
-```bash
-npm install
-```
-
-### 2) Environment
-
-Copy `.env.example` to `.env` and set values:
+Copy `.env.example` to `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
 Required:
-- `DATABASE_URL`
-- optional: `OPENAI_API_KEY`
-- optional: `OPENAI_MODEL` (default `gpt-4o-mini`)
-- `INGESTION_SECRET` (for `/api/ingest` auth in non-dev)
 
-### 3) Database
+- `DATABASE_URL`
+
+Optional:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `INGESTION_SECRET`
+
+---
+
+## Database setup (robust flow)
+
+### 1) Check configuration
 
 ```bash
-npm run db:migrate
-npm run db:generate
-npm run db:seed
+npm run db:status
 ```
 
-### 4) Run app
+If `DATABASE_URL` is missing or DB is unreachable, this command exits with friendly guidance.
+
+### 2) Full setup (recommended)
+
+```bash
+npm run db:setup
+```
+
+This runs:
+
+1. `prisma generate`
+2. `prisma migrate deploy`
+3. `prisma db seed`
+
+### 3) Start app
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:3000
+Open: `http://localhost:3000`
 
 ---
 
-## Ingestion flow
+## Migrations and seed behavior
 
-`ingestLatestPosts()` does:
+- Baseline migration is committed at `prisma/migrations/0001_init`.
+- Seed script upserts:
+  - tracked watchlist accounts
+  - realistic demo posts
+  - summaries
+  - baseline ingestion runs (only if runs table is empty)
 
-1. create `IngestionRun` in RUNNING state
-2. load active accounts
-3. call provider `fetchLatestPostsForAccount(account)`
-4. normalize + dedupe via `(provider, externalPostId)`
-5. insert new posts
-6. generate summaries for newly inserted posts only
-7. finalize ingestion run with status + metadata
+This ensures the terminal feels alive even before production ingestion is wired.
 
-### Manual ingestion
+---
 
-Use the **Run ingestion now** button in dashboard header (server action).
+## Runtime behavior and failure handling
 
-### Scheduler ingestion
+### Controlled error handling (no raw infra dumps)
 
-Route: `GET/POST /api/ingest`
+When DB is not configured/reachable:
 
-In production, provide one of:
+- the app switches to **DEMO mode**
+- shows controlled status messaging in command bar
+- serves curated demo intelligence feed from `lib/dashboard/demo-payload.ts`
+
+Manual/API ingestion returns controlled messages/codes:
+
+- `DB_URL_MISSING`
+- `DB_UNREACHABLE`
+- `INGESTION_FAILURE`
+
+No raw Prisma stack traces are surfaced in the main UI.
+
+---
+
+## Ingestion endpoints
+
+- Manual: command bar "Run ingest"
+- API: `GET/POST /api/ingest`
+
+Auth (non-development):
+
 - `Authorization: Bearer <INGESTION_SECRET>`
-- `x-ingestion-secret: <INGESTION_SECRET>`
-- query param `?secret=<INGESTION_SECRET>`
-
-This is compatible with Vercel cron or any external scheduler.
+- OR `x-ingestion-secret: <INGESTION_SECRET>`
+- OR `?secret=<INGESTION_SECRET>`
 
 ---
 
-## Provider abstraction and current status
+## Vercel deployment
 
-Current provider implementation is:
-- `MockXProvider` (placeholder)
+### Required env vars in Vercel project
 
-### What is real vs placeholder
+- `DATABASE_URL`
+- `INGESTION_SECRET`
 
-- **Real**:
-  - account loading
-  - ingestion orchestration
-  - normalization contract
-  - dedupe + persistence
-  - summary generation pipeline
-  - dashboard UI + filters
-  - scheduler route
+Optional:
 
-- **Placeholder**:
-  - actual X API/network ingestion source
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
 
-### Replacing with real X provider
-
-1. Add `real-x-provider.ts` implementing `SocialIngestionProvider`
-2. Implement authenticated fetch logic in `fetchLatestPostsForAccount`
-3. Return normalized `NormalizedSocialPost[]`
-4. Swap selection in `lib/providers/index.ts`
-
-No dashboard or ingestion service rewrite required.
+After setting env vars, redeploy.
 
 ---
 
-## AI summary behavior
+## What is fully functional vs placeholder
 
-Service: `src/lib/summary/summary-service.ts`
+### Fully functional
 
-- Uses OpenAI when `OPENAI_API_KEY` is present
-- Generates 1-2 sentence “why this matters” summaries
-- Does **not** regenerate existing summaries during ingestion
-- Uses fallback heuristic summary if OpenAI is unavailable
+- terminal layout + information hierarchy
+- watchlists/filters/toggles
+- post intelligence cards + action affordances
+- controlled runtime status system
+- Prisma schema/migration/seed pipeline
+- ingestion orchestration shell
+- API + manual trigger surface
 
-Prompt is centralized and easy to tune.
+### Placeholder / mocked
 
----
-
-## V1 feature checklist
-
-- [x] Watchlist seed (15 accounts)
-- [x] Provider abstraction
-- [x] Ingestion pipeline with run tracking
-- [x] Deduped normalized post storage
-- [x] AI summary service layer
-- [x] Dashboard with filters
-- [x] Manual ingestion trigger
-- [x] Scheduler-compatible `/api/ingest`
-- [x] Typed modular architecture
+- real X API ingestion source
+  - current provider: `MockXProvider`
+  - isolated under `src/lib/providers`
+  - can be replaced without redesigning terminal UI
 
 ---
 
-## Known limitations (V1)
-
-1. X ingestion provider is mock (placeholder architecture only).
-2. Dashboard filtering is client-side over loaded records (fine for V1; paginate for scale).
-3. No auth layer yet (internal tool assumption).
-4. No retry/backoff queue for provider failures yet.
-5. No background job queue for summary generation spikes.
-
----
-
-## Recommended V2
-
-1. **Real provider integration**
-   - official API or trusted ingestion backend
-   - provider health + retry/backoff + circuit breaker
-
-2. **Job queue + worker split**
-   - ingestion and summary generation decoupled (e.g., QStash/Trigger.dev/BullMQ)
-
-3. **Auth and role controls**
-   - SSO/internal auth for manual trigger and admin controls
-
-4. **Pagination + server-side filters**
-   - reduce payload, speed up large datasets
-
-5. **Entity/topic extraction**
-   - tags from content, sentiment, narrative clusters
-
-6. **Multi-provider expansion**
-   - Telegram/Discord/RSS/Farcaster via same provider contract
-
-7. **Observability**
-   - structured logs, run metrics, alerting on ingestion failures
-
----
-
-## Quick start commands recap
+## Quick command reference
 
 ```bash
 npm install
-npm run db:migrate
-npm run db:seed
+npm run db:status
+npm run db:setup
 npm run dev
 ```
 
-Manual one-off ingestion from CLI:
+Optional one-shot ingest:
 
 ```bash
 npm run ingest:once

@@ -1,4 +1,4 @@
-import type { Account, AccountCategory, IngestionRun, IngestionStatus, Post, PostSummary, SocialProvider } from "@prisma/client";
+import type { Account, AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client";
 
 export type TrackedAccount = Pick<Account, "id" | "displayName" | "handle" | "category" | "tags" | "isActive" | "provider">;
 
@@ -15,27 +15,73 @@ export type NormalizedSocialPost = {
   rawPayload?: unknown;
 };
 
-export type DashboardPost = Post & {
-  account: Account;
-  summary: PostSummary | null;
+export type DashboardAccount = {
+  id: string;
+  displayName: string;
+  handle: string;
+  category: AccountCategory;
+  tags: string[];
+};
+
+export type DashboardPost = {
+  id: string;
+  provider: SocialProvider;
+  accountId: string;
+  externalPostId: string;
+  content: string;
+  postedAt: Date;
+  fetchedAt: Date;
+  sourceUrl: string;
+  likeCount: number;
+  replyCount: number;
+  repostCount: number;
+  quoteCount: number;
+  account: DashboardAccount;
+  summary: {
+    summary: string;
+    model: string;
+  } | null;
 };
 
 export type DashboardStats = {
-  totalAccounts: number;
+  trackedAccounts: number;
   activeAccounts: number;
-  posts24h: number;
-  posts7d: number;
+  newPosts2h: number;
+  newPosts24h: number;
+  highSignalPosts: number;
+  opportunitiesDetected: number;
   latestIngestionStatus: IngestionStatus | null;
   latestIngestionAt: Date | null;
 };
 
+export type IngestionRunPreview = {
+  id: string;
+  status: IngestionStatus;
+  startedAt: Date;
+  finishedAt: Date | null;
+  notes: string | null;
+};
+
+export type TerminalSystemStatus = {
+  mode: "LIVE" | "DEMO";
+  dbCode: "CONNECTED" | "MISSING_DATABASE_URL" | "UNREACHABLE";
+  dbMessage: string;
+  providerLabel: string;
+  summaryLabel: string;
+  cadenceLabel: string;
+  lastRefreshAt: Date;
+};
+
 export type DashboardPayload = {
   posts: DashboardPost[];
-  accounts: Pick<Account, "id" | "displayName" | "handle" | "category" | "tags">[];
+  accounts: DashboardAccount[];
   categories: AccountCategory[];
   stats: DashboardStats;
-  ingestionRuns: Pick<IngestionRun, "id" | "status" | "startedAt" | "finishedAt" | "notes">[];
+  ingestionRuns: IngestionRunPreview[];
+  system: TerminalSystemStatus;
 };
+
+export type IngestionErrorCode = "NONE" | "DB_URL_MISSING" | "DB_UNREACHABLE" | "INGESTION_FAILURE";
 
 export type IngestionOutcome = {
   runId: string;
@@ -45,4 +91,5 @@ export type IngestionOutcome = {
   postsInserted: number;
   summariesGenerated: number;
   errors: string[];
+  errorCode: IngestionErrorCode;
 };

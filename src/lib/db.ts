@@ -1,16 +1,17 @@
 import { PrismaClient } from "@prisma/client";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var prisma: PrismaClient | undefined;
-}
+type GlobalWithPrisma = typeof globalThis & {
+  prisma?: PrismaClient;
+};
+
+const globalForPrisma = globalThis as GlobalWithPrisma;
 
 export const db =
-  global.prisma ||
+  globalForPrisma.prisma ||
   new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
 if (process.env.NODE_ENV !== "production") {
-  global.prisma = db;
+  globalForPrisma.prisma = db;
 }

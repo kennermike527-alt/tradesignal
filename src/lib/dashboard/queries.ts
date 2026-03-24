@@ -1,34 +1,67 @@
-import { AccountCategory, IngestionStatus } from "@prisma/client";
-import { subDays } from "date-fns";
+import { AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client";
+import { subHours } from "date-fns";
 import { db } from "@/lib/db";
-import type { DashboardPayload } from "@/lib/types";
+import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
+import { getDatabaseHealth } from "@/lib/runtime/db-health";
+import type { DashboardPayload, DashboardPost, DashboardStats } from "@/lib/types";
 
-function emptyPayload(): DashboardPayload {
+function buildStats(posts: DashboardPost[], activeAccounts: number, latestStatus: IngestionStatus | null, latestAt: Date | null): DashboardStats {
+  const now = Date.now();
+  const in2h = now - 2 * 60 * 60 * 1000;
+  const in24h = now - 24 * 60 * 60 * 1000;
+
+  const highSignalPosts = posts.filter(
+    (post) => post.likeCount + post.replyCount * 2 + post.repostCount * 3 + post.quoteCount * 2 >= 420
+  ).length;
+
+  const opportunitiesDetected = posts.filter((post) => {
+    const text = `${post.content} ${post.summary?.summary ?? ""}`.toLowerCase();
+    return /engage|opportun|partnership|opening|window|distribution/.test(text);
+  }).length;
+
   return {
-    posts: [],
-    accounts: [],
-    categories: Object.values(AccountCategory),
-    stats: {
-      totalAccounts: 0,
-      activeAccounts: 0,
-      posts24h: 0,
-      posts7d: 0,
-      latestIngestionStatus: null,
-      latestIngestionAt: null,
-    },
-    ingestionRuns: [],
+    trackedAccounts: activeAccounts,
+    activeAccounts,
+    newPosts2h: posts.filter((post) => post.postedAt.getTime() >= in2h).length,
+    newPosts24h: posts.filter((post) => post.postedAt.getTime() >= in24h).length,
+    highSignalPosts,
+    opportunitiesDetected,
+    latestIngestionStatus: latestStatus,
+    latestIngestionAt: latestAt,
   };
 }
 
-export async function getDashboardPayload(limit = 300): Promise<DashboardPayload> {
+export async function getDashboardPayload(limit = 320): Promise<DashboardPayload> {
+  const dbHealth = await getDatabaseHealth();
+
+  if (!dbHealth.ok) {
+    return buildDemoPayload({
+      dbCode: dbHealth.code,
+      dbMessage: dbHealth.message,
+    });
+  }
+
   try {
-    const [posts, accounts, latestRun, posts24h, posts7d, activeAccounts, ingestionRuns] = await Promise.all([
+    const [postsRaw, accounts, latestRun, ingestionRuns] = await Promise.all([
       db.post.findMany({
         orderBy: { postedAt: "desc" },
         take: limit,
         include: {
-          account: true,
-          summary: true,
+          account: {
+            select: {
+              id: true,
+              displayName: true,
+              handle: true,
+              category: true,
+              tags: true,
+            },
+          },
+          summary: {
+            select: {
+              summary: true,
+              model: true,
+            },
+          },
         },
       }),
       db.account.findMany({
@@ -42,12 +75,16 @@ export async function getDashboardPayload(limit = 300): Promise<DashboardPayload
           tags: true,
         },
       }),
-      db.ingestionRun.findFirst({ orderBy: { startedAt: "desc" } }),
-      db.post.count({ where: { postedAt: { gte: subDays(new Date(), 1) } } }),
-      db.post.count({ where: { postedAt: { gte: subDays(new Date(), 7) } } }),
-      db.account.count({ where: { isActive: true } }),
+      db.ingestionRun.findFirst({
+        orderBy: { startedAt: "desc" },
+        select: {
+          status: true,
+          finishedAt: true,
+          startedAt: true,
+        },
+      }),
       db.ingestionRun.findMany({
-        take: 5,
+        take: 10,
         orderBy: { startedAt: "desc" },
         select: {
           id: true,
@@ -59,22 +96,51 @@ export async function getDashboardPayload(limit = 300): Promise<DashboardPayload
       }),
     ]);
 
+    const posts: DashboardPost[] = postsRaw.map((post) => ({
+      id: post.id,
+      provider: post.provider,
+      externalPostId: post.externalPostId,
+      accountId: post.accountId,
+      content: post.content,
+      postedAt: post.postedAt,
+      fetchedAt: post.fetchedAt,
+      sourceUrl: post.sourceUrl,
+      likeCount: post.likeCount,
+      replyCount: post.replyCount,
+      repostCount: post.repostCount,
+      quoteCount: post.quoteCount ?? 0,
+      account: post.account,
+      summary: post.summary,
+    }));
+
+    const stats = buildStats(
+      posts,
+      accounts.length,
+      latestRun?.status ?? null,
+      latestRun?.finishedAt ?? latestRun?.startedAt ?? null
+    );
+
     return {
       posts,
       accounts,
       categories: Object.values(AccountCategory),
-      stats: {
-        totalAccounts: accounts.length,
-        activeAccounts,
-        posts24h,
-        posts7d,
-        latestIngestionStatus: latestRun?.status ?? null,
-        latestIngestionAt: latestRun?.finishedAt ?? latestRun?.startedAt ?? null,
-      },
+      stats,
       ingestionRuns,
+      system: {
+        mode: "LIVE",
+        dbCode: "CONNECTED",
+        dbMessage: "Database connected.",
+        providerLabel: SocialProvider.X,
+        summaryLabel: process.env.OPENAI_API_KEY ? "OpenAI + fallback" : "Heuristic fallback",
+        cadenceLabel: "Manual ingest + /api/ingest scheduler",
+        lastRefreshAt: new Date(),
+      },
     };
   } catch {
-    return emptyPayload();
+    return buildDemoPayload({
+      dbCode: "UNREACHABLE",
+      dbMessage: "Database query failed. Showing demo-mode intelligence stream with controlled fallback.",
+    });
   }
 }
 
@@ -84,4 +150,8 @@ export function statusTone(status: IngestionStatus | null) {
   if (status === IngestionStatus.PARTIAL) return "warning" as const;
   if (status === IngestionStatus.FAILED) return "danger" as const;
   return "muted" as const;
+}
+
+export function isFresh(ts: Date) {
+  return ts.getTime() >= subHours(new Date(), 2).getTime();
 }

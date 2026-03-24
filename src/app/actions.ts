@@ -9,20 +9,36 @@ type ManualIngestResponse = {
   runId?: string;
 };
 
-export async function runManualIngestionAction(): Promise<ManualIngestResponse> {
-  try {
-    const result = await ingestLatestPosts({ initiatedBy: "manual", generateSummaries: true });
-    revalidatePath("/");
+function userMessageFromCode(code: string) {
+  if (code === "DB_URL_MISSING") {
+    return "Ingestion offline: DATABASE_URL missing. Configure env + run npm run db:setup.";
+  }
 
+  if (code === "DB_UNREACHABLE") {
+    return "Ingestion offline: database unreachable. Check database service and DATABASE_URL.";
+  }
+
+  if (code === "INGESTION_FAILURE") {
+    return "Ingestion completed with issues. Review ingestion runs panel for status details.";
+  }
+
+  return "Ingestion did not complete. Please retry.";
+}
+
+export async function runManualIngestionAction(): Promise<ManualIngestResponse> {
+  const result = await ingestLatestPosts({ initiatedBy: "manual", generateSummaries: true });
+
+  if (result.status === "SUCCESS" || result.status === "PARTIAL") {
+    revalidatePath("/");
     return {
-      ok: result.status === "SUCCESS" || result.status === "PARTIAL",
+      ok: true,
       message: `${result.status}: inserted ${result.postsInserted} posts, generated ${result.summariesGenerated} summaries.`,
       runId: result.runId,
     };
-  } catch (error) {
-    return {
-      ok: false,
-      message: `FAILED: ${(error as Error).message || "unknown error"}`,
-    };
   }
+
+  return {
+    ok: false,
+    message: userMessageFromCode(result.errorCode),
+  };
 }
