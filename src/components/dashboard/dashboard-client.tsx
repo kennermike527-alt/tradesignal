@@ -336,10 +336,6 @@ export function DashboardClient({ payload }: Props) {
     [contextSummary]
   );
 
-  const narrativeFocusUpdatedText = contextSummary
-    ? formatDistanceToNowStrict(new Date(contextSummary.generatedAt), { addSuffix: true })
-    : "no summary";
-
   React.useEffect(() => {
     setSelectedKeyTopics((current) =>
       current.filter((topic) => summaryKeyTopics.some((keyTopic) => keyTopic.toLowerCase() === topic.toLowerCase()))
@@ -846,12 +842,7 @@ export function DashboardClient({ payload }: Props) {
 
             <Card className="border-border/70 bg-card/70">
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Narrative focus</CardTitle>
-                  <span className="text-[10px] text-muted-foreground">
-                    {summaryPending ? "Updating..." : `Updated ${narrativeFocusUpdatedText}`}
-                  </span>
-                </div>
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Narrative focus</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 p-2 pt-0">
                 <button
