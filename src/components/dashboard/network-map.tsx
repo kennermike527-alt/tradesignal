@@ -50,6 +50,13 @@ const CATEGORY_ORDER: AccountCategory[] = [
   AccountCategory.INFLUENCER,
 ];
 
+const RELATIONSHIP_COLORS = {
+  mentions: "#6ea8ff",
+  replies: "#5bd8d0",
+  narrative: "#b58dff",
+  mixed: "#f6ba63",
+} as const;
+
 function hubColor(centerFocus: IntelligenceCenter) {
   return centerFocus === "IOTA" ? "#52a7ff" : "#f5b84d";
 }
@@ -168,6 +175,20 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
 
     const edgeEls = network.edges.map((edge) => {
       const shared = edge.sharedNarratives.length;
+      const hasMentions = edge.mentionCount > 0;
+      const hasReplies = edge.replyCount > 0;
+      const hasNarrative = shared > 0;
+
+      const relationshipKind = hasNarrative && (hasMentions || hasReplies)
+        ? "mixed"
+        : hasNarrative
+        ? "narrative"
+        : hasReplies
+        ? "replies"
+        : "mentions";
+
+      const lineStyle = relationshipKind === "replies" ? "dashed" : "solid";
+
       return {
         data: {
           id: edge.id,
@@ -175,7 +196,9 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
           target: edge.target,
           weight: edge.weight,
           narrativeCount: shared,
-          color: shared > 0 ? "#8e82ff" : "#4d6f92",
+          relationshipKind,
+          lineStyle,
+          color: RELATIONSHIP_COLORS[relationshipKind],
         },
       };
     });
@@ -344,7 +367,8 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
                 style: {
                   width: "mapData(weight, 1, 24, 1, 4.5)",
                   "line-color": "data(color)",
-                  opacity: 0.52,
+                  "line-style": "data(lineStyle)",
+                  opacity: 0.64,
                   "curve-style": "bezier",
                 },
               },
@@ -390,7 +414,19 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
             </span>
           ))}
           <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
-            <Network className="size-2.5" /> relationships: mentions + replies + shared narratives
+            <Network className="size-2.5" /> relationships
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
+            <span className="h-[2px] w-3 rounded" style={{ backgroundColor: RELATIONSHIP_COLORS.mentions }} /> mentions
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
+            <span className="h-[2px] w-3 rounded" style={{ backgroundColor: RELATIONSHIP_COLORS.replies }} /> replies
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
+            <span className="h-[2px] w-3 rounded" style={{ backgroundColor: RELATIONSHIP_COLORS.narrative }} /> shared narratives
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
+            <span className="h-[2px] w-3 rounded" style={{ backgroundColor: RELATIONSHIP_COLORS.mixed }} /> mixed
           </span>
         </div>
       </CardContent>
