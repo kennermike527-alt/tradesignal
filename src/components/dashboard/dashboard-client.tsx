@@ -11,8 +11,10 @@ import {
   ExternalLink,
   Filter,
   Flame,
+  KeyRound,
   Layers,
   Info,
+  LogOut,
   MessageSquare,
   Plus,
   Radar,
@@ -35,6 +37,8 @@ import type {
 } from "@/lib/types";
 import { addWatchlistAccountAction, getContextSummaryAction, refreshContextSummaryAction } from "@/app/actions";
 import { AddWatchlistAccountDialog } from "@/components/dashboard/add-watchlist-account-dialog";
+import { XLoginDialog } from "@/components/dashboard/x-login-dialog";
+import { XRespondDialog } from "@/components/dashboard/x-respond-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -60,6 +64,12 @@ const watchlists: Array<{ key: WatchlistKey; label: string; description: string 
 const centers: IntelligenceCenter[] = ["IOTA", "TWIN"];
 const sources: SourcePlatform[] = ["X", "LINKEDIN"];
 const numberFmt = new Intl.NumberFormat();
+const X_SESSION_STORAGE_KEY = "tradesignal.x.session.v1";
+
+type XSession = {
+  username: string;
+  accessToken: string;
+};
 
 function normalizeHandleForMatch(value: string) {
   return value.trim().replace(/^@+/, "").toLowerCase();
@@ -171,6 +181,16 @@ export function DashboardClient({ payload }: Props) {
 
   const [showHighSignalInfo, setShowHighSignalInfo] = React.useState(false);
 
+  const [xSession, setXSession] = React.useState<XSession | null>(null);
+  const [xLoginOpen, setXLoginOpen] = React.useState(false);
+  const [xLoginMessage, setXLoginMessage] = React.useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [xComposeOpen, setXComposeOpen] = React.useState(false);
+  const [xComposeTarget, setXComposeTarget] = React.useState<DashboardPost | null>(null);
+  const [xComposeMessage, setXComposeMessage] = React.useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [xActionToast, setXActionToast] = React.useState<string | null>(null);
+  const [pendingRespondPost, setPendingRespondPost] = React.useState<DashboardPost | null>(null);
+  const [xPending, startXTransition] = React.useTransition();
+
   const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
 
   const sourceScopedPosts = React.useMemo(
@@ -239,6 +259,29 @@ export function DashboardClient({ payload }: Props) {
       setSummaryError(null);
     });
   }, [centerFocus, sourceTab, summaryWindowHours, summaryKey, startSummaryTransition]);
+
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(X_SESSION_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as Partial<XSession>;
+      if (!parsed.username || !parsed.accessToken) return;
+
+      setXSession({
+        username: parsed.username,
+        accessToken: parsed.accessToken,
+      });
+    } catch {
+      // ignore storage parse errors
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!xActionToast) return;
+    const timer = window.setTimeout(() => setXActionToast(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [xActionToast]);
 
   React.useEffect(() => {
     if (accountId === "all") return;
@@ -445,6 +488,100 @@ export function DashboardClient({ payload }: Props) {
     });
   }, [centerFocus, sourceTab, summaryWindowHours, summaryKey, startSummaryTransition]);
 
+  const openRespondFlow = React.useCallback((post: DashboardPost) => {
+    if (sourceTab !== "X") {
+      setXActionToast("Direct response posting is currently available only on X context.");
+      return;
+    }
+
+    if (!xSession) {
+      setPendingRespondPost(post);
+      setXLoginMessage({ kind: "error", text: "Connect your X account first to post responses." });
+      setXLoginOpen(true);
+      return;
+    }
+
+    setXComposeTarget(post);
+    setXComposeMessage(null);
+    setXComposeOpen(true);
+  }, [sourceTab, xSession]);
+
+  const handleConnectX = React.useCallback((input: { username: string; accessToken: string }) => {
+    if (!input.username.trim() || !input.accessToken.trim()) {
+      setXLoginMessage({ kind: "error", text: "Username and token are required." });
+      return;
+    }
+
+    const session = {
+      username: input.username.trim().replace(/^@+/, ""),
+      accessToken: input.accessToken.trim(),
+    };
+
+    setXSession(session);
+    window.localStorage.setItem(X_SESSION_STORAGE_KEY, JSON.stringify(session));
+    setXLoginMessage({ kind: "success", text: `Connected as @${session.username}.` });
+
+    if (pendingRespondPost) {
+      setXComposeTarget(pendingRespondPost);
+      setXComposeOpen(true);
+      setPendingRespondPost(null);
+    }
+
+    setXActionToast(`X connected: @${session.username}`);
+    setTimeout(() => {
+      setXLoginOpen(false);
+      setXLoginMessage(null);
+    }, 350);
+  }, [pendingRespondPost]);
+
+  const disconnectX = React.useCallback(() => {
+    setXSession(null);
+    setPendingRespondPost(null);
+    window.localStorage.removeItem(X_SESSION_STORAGE_KEY);
+    setXActionToast("Disconnected X account.");
+  }, []);
+
+  const handlePostResponse = React.useCallback(
+    (input: { text: string; replyToTweetId?: string }) => {
+      if (!xSession) {
+        setXComposeMessage({ kind: "error", text: "No X session found. Connect your account first." });
+        return;
+      }
+
+      startXTransition(async () => {
+        try {
+          const response = await fetch("/api/x/respond", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accessToken: xSession.accessToken,
+              text: input.text,
+              replyToTweetId: input.replyToTweetId,
+            }),
+          });
+
+          const json = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+
+          if (!response.ok || !json.ok) {
+            setXComposeMessage({ kind: "error", text: json.message || "Unable to post to X." });
+            return;
+          }
+
+          setXComposeMessage({ kind: "success", text: "Posted to X successfully." });
+          setXActionToast(`Response posted from @${xSession.username}.`);
+          setTimeout(() => {
+            setXComposeOpen(false);
+            setXComposeTarget(null);
+            setXComposeMessage(null);
+          }, 350);
+        } catch {
+          setXComposeMessage({ kind: "error", text: "Network error while posting to X." });
+        }
+      });
+    },
+    [xSession, startXTransition]
+  );
+
   return (
     <main className="min-h-screen bg-background px-3 py-3 sm:px-4 lg:px-5">
       <div className="mx-auto max-w-[1600px] space-y-3">
@@ -457,7 +594,31 @@ export function DashboardClient({ payload }: Props) {
                 </p>
                 <h1 className="text-lg font-semibold leading-tight sm:text-xl">{centerFocus} intelligence command center</h1>
               </div>
-              <ManualIngestButton compact />
+              <div className="flex items-center gap-2">
+                {sourceTab === "X" ? (
+                  xSession ? (
+                    <button
+                      type="button"
+                      onClick={disconnectX}
+                      className="inline-flex h-8 items-center gap-1 rounded border border-border/70 bg-background/60 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <LogOut className="size-3" /> @{xSession.username}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setXLoginMessage(null);
+                        setXLoginOpen(true);
+                      }}
+                      className="inline-flex h-8 items-center gap-1 rounded border border-border/70 bg-background/60 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <KeyRound className="size-3" /> X login
+                    </button>
+                  )
+                ) : null}
+                <ManualIngestButton compact />
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
@@ -514,6 +675,12 @@ export function DashboardClient({ payload }: Props) {
             {system.mode === "DEMO" ? (
               <div className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
                 {system.dbMessage}
+              </div>
+            ) : null}
+
+            {xActionToast ? (
+              <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-200">
+                {xActionToast}
               </div>
             ) : null}
           </CardContent>
@@ -1033,23 +1200,34 @@ export function DashboardClient({ payload }: Props) {
               <CardHeader className="pb-2">
                 <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Engage now</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1 p-2 pt-0">
+              <CardContent className="space-y-2 p-2 pt-0">
                 {summaryEngageNow.length > 0 ? (
-                  summaryEngageNow.slice(0, 6).map((angle, index) => (
+                  summaryEngageNow.slice(0, 4).map((angle, index) => (
                     <div key={`angle-${index}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs text-muted-foreground">
                       {angle}
                     </div>
                   ))
-                ) : engageNow.length > 0 ? (
-                  engageNow.map((post) => (
+                ) : null}
+
+                {engageNow.length > 0 ? (
+                  engageNow.slice(0, 6).map((post) => (
                     <div key={`engage-${post.id}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
-                      <p className="font-medium">@{post.account.handle}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-medium">@{post.account.handle}</p>
+                        <button
+                          type="button"
+                          onClick={() => openRespondFlow(post)}
+                          className="inline-flex h-6 items-center gap-1 rounded border border-border/70 bg-background/70 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                        >
+                          {xSession ? "Respond" : "Login to respond"}
+                        </button>
+                      </div>
                       <p className="mt-0.5 text-muted-foreground">{truncate(post.summary?.summary ?? post.content, 120)}</p>
                     </div>
                   ))
-                ) : (
+                ) : summaryEngageNow.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No immediate opportunities in current scope.</p>
-                )}
+                ) : null}
               </CardContent>
             </Card>
 
@@ -1100,6 +1278,30 @@ export function DashboardClient({ payload }: Props) {
         message={watchlistDialogMessage}
         onClose={closeWatchlistDialog}
         onSubmit={handleAddWatchlistAccount}
+      />
+
+      <XLoginDialog
+        open={xLoginOpen}
+        pending={xPending}
+        message={xLoginMessage}
+        onClose={() => {
+          setXLoginOpen(false);
+          setXLoginMessage(null);
+        }}
+        onSubmit={handleConnectX}
+      />
+
+      <XRespondDialog
+        open={xComposeOpen}
+        post={xComposeTarget}
+        pending={xPending}
+        message={xComposeMessage}
+        onClose={() => {
+          setXComposeOpen(false);
+          setXComposeTarget(null);
+          setXComposeMessage(null);
+        }}
+        onSubmit={handlePostResponse}
       />
     </main>
   );
