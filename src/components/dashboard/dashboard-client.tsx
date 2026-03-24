@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ManualIngestButton } from "@/components/dashboard/manual-ingest-button";
+import { NetworkMap } from "@/components/dashboard/network-map";
 import { toTitleCase, truncate } from "@/lib/utils";
 
 type Props = {
@@ -194,6 +195,10 @@ export function DashboardClient({ payload }: Props) {
     setValue((current) => (current.includes(value) ? current.filter((item) => item !== value) : [...current, value]));
   };
 
+  const handleGraphSelectAccount = React.useCallback((nextAccountId: string) => {
+    setAccountId(nextAccountId);
+  }, []);
+
   return (
     <main className="min-h-screen bg-background px-3 py-3 sm:px-4 lg:px-5">
       <div className="mx-auto max-w-[1600px] space-y-3">
@@ -330,6 +335,13 @@ export function DashboardClient({ payload }: Props) {
           </aside>
 
           <section className="space-y-2">
+            <NetworkMap
+              posts={filtered}
+              accounts={accounts}
+              selectedAccountId={accountId}
+              onSelectAccount={handleGraphSelectAccount}
+            />
+
             <Card className="border-border/70 bg-card/70">
               <CardContent className="grid gap-2 p-2 md:grid-cols-2 xl:grid-cols-6">
                 <label className="grid gap-1 text-[11px] text-muted-foreground">
