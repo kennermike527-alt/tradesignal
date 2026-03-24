@@ -1,4 +1,5 @@
 import { AccountCategory, IngestionStatus } from "@prisma/client";
+import { cadenceLabelForAccounts } from "@/lib/ingestion/budget-guard";
 import type { DashboardPayload, TerminalSystemStatus } from "@/lib/types";
 
 type BuildDemoOptions = {
@@ -38,7 +39,7 @@ export function buildDemoPayload(options: BuildDemoOptions): DashboardPayload {
       dbMessage: `${options.dbMessage} Live-only mode is enabled: no curated fallback account list is injected.`,
       providerLabel: "X + LinkedIn (live-only)",
       summaryLabel: process.env.OPENAI_API_KEY ? "OpenAI + fallback" : "Heuristic fallback",
-      cadenceLabel: "Manual ingest + /api/ingest scheduler",
+      cadenceLabel: cadenceLabelForAccounts(0),
       lastRefreshAt: now,
     },
   };

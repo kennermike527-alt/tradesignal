@@ -28,6 +28,10 @@ function apiMessageFromCode(code: string) {
     return "Ingestion failed during processing.";
   }
 
+  if (code === "BUDGET_GUARD_BLOCK") {
+    return "Ingestion blocked by budget guard. Increase cadence interval or reduce account scope.";
+  }
+
   return "Ingestion failed.";
 }
 
@@ -44,6 +48,7 @@ async function handleIngest(request: NextRequest) {
         ok: false,
         code: result.errorCode,
         message: apiMessageFromCode(result.errorCode),
+        budget: result.budget,
       },
       { status: 503 }
     );

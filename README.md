@@ -124,6 +124,15 @@ Optional:
 - `OPENAI_MODEL`
 - `INGESTION_SECRET`
 
+Budget guard (recommended defaults for ~$350/month target):
+
+- `INGEST_MONTHLY_BUDGET_USD=350`
+- `INGEST_CADENCE_MINUTES=60`
+- `INGEST_POST_READ_COST_USD=0.005`
+- `INGEST_USER_READ_COST_USD=0.01`
+- `INGEST_EST_POSTS_PER_ACCOUNT_PER_RUN=10`
+- `INGEST_EST_USER_READS_PER_ACCOUNT_PER_RUN=0`
+
 ---
 
 ## Database setup (robust flow)
@@ -181,6 +190,9 @@ Manual/API ingestion returns controlled messages/codes:
 - `DB_URL_MISSING`
 - `DB_UNREACHABLE`
 - `INGESTION_FAILURE`
+- `BUDGET_GUARD_BLOCK`
+
+When `BUDGET_GUARD_BLOCK` triggers, ingestion is blocked until cadence/scope is adjusted to stay under budget.
 
 No raw Prisma stack traces are surfaced in the main UI.
 

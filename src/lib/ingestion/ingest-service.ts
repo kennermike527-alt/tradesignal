@@ -1,9 +1,10 @@
 import { IngestionStatus, Prisma, SocialProvider } from "@prisma/client";
 import { db } from "@/lib/db";
+import { estimateBudgetForAccounts, getBudgetPolicy } from "@/lib/ingestion/budget-guard";
 import { getProvider } from "@/lib/providers";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
 import { generatePostSummary } from "@/lib/summary/summary-service";
-import type { IngestionOutcome, NormalizedSocialPost } from "@/lib/types";
+import type { IngestionOutcome, NormalizedSocialPost, TrackedAccount } from "@/lib/types";
 
 type IngestOptions = {
   provider?: SocialProvider;
@@ -27,9 +28,14 @@ function normalizeForCreate(post: NormalizedSocialPost): Omit<Prisma.PostCreateI
   };
 }
 
-function baseFailure(code: IngestionOutcome["errorCode"], message: string): IngestionOutcome {
+function baseFailure(
+  code: IngestionOutcome["errorCode"],
+  message: string,
+  runId = "unavailable",
+  budget?: IngestionOutcome["budget"]
+): IngestionOutcome {
   return {
-    runId: "unavailable",
+    runId,
     status: IngestionStatus.FAILED,
     accountsProcessed: 0,
     postsFetched: 0,
@@ -37,7 +43,16 @@ function baseFailure(code: IngestionOutcome["errorCode"], message: string): Inge
     summariesGenerated: 0,
     errorCode: code,
     errors: [message],
+    budget,
   };
+}
+
+function budgetGuardMessage(budget: NonNullable<IngestionOutcome["budget"]>) {
+  return `Budget guard blocked ingestion: projected $${budget.projectedMonthlyCostUsd.toFixed(
+    2
+  )}/mo exceeds cap $${budget.monthlyBudgetUsd.toFixed(2)} at ${budget.cadenceMinutes}m cadence. Set cadence >= ${
+    budget.minimumCadenceMinutes
+  }m or reduce scope.`;
 }
 
 export async function ingestLatestPosts(options: IngestOptions = {}): Promise<IngestionOutcome> {
@@ -52,34 +67,10 @@ export async function ingestLatestPosts(options: IngestOptions = {}): Promise<In
     );
   }
 
-  let run;
+  let accounts: TrackedAccount[] = [];
 
   try {
-    run = await db.ingestionRun.create({
-      data: {
-        provider,
-        status: IngestionStatus.RUNNING,
-        notes: options.initiatedBy ? `initiatedBy=${options.initiatedBy}` : undefined,
-      },
-    });
-  } catch {
-    return baseFailure("DB_UNREACHABLE", "Unable to initialize ingestion run record.");
-  }
-
-  const result: IngestionOutcome = {
-    runId: run.id,
-    status: IngestionStatus.SUCCESS,
-    accountsProcessed: 0,
-    postsFetched: 0,
-    postsInserted: 0,
-    summariesGenerated: 0,
-    errors: [],
-    errorCode: "NONE",
-  };
-
-  try {
-    const providerImpl = getProvider(provider);
-    const accounts = await db.account.findMany({
+    accounts = await db.account.findMany({
       where: { provider, isActive: true },
       select: {
         id: true,
@@ -92,6 +83,80 @@ export async function ingestLatestPosts(options: IngestOptions = {}): Promise<In
       },
       orderBy: { displayName: "asc" },
     });
+  } catch {
+    return baseFailure("DB_UNREACHABLE", "Unable to load tracked accounts for ingestion.");
+  }
+
+  const policy = getBudgetPolicy();
+  const estimate = estimateBudgetForAccounts(accounts.length, policy);
+
+  const budget: NonNullable<IngestionOutcome["budget"]> = {
+    monthlyBudgetUsd: policy.monthlyBudgetUsd,
+    cadenceMinutes: policy.cadenceMinutes,
+    estimatedCostPerRunUsd: estimate.estimatedCostPerRunUsd,
+    projectedMonthlyCostUsd: estimate.projectedMonthlyCostUsd,
+    minimumCadenceMinutes: estimate.minimumCadenceMinutes,
+  };
+
+  if (estimate.blocked) {
+    let runId = "unavailable";
+
+    try {
+      const blockedRun = await db.ingestionRun.create({
+        data: {
+          provider,
+          status: IngestionStatus.FAILED,
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          notes: budgetGuardMessage(budget),
+          metadata: {
+            budget,
+            guard: "BUDGET_GUARD_BLOCK",
+            initiatedBy: options.initiatedBy ?? "unknown",
+            activeAccounts: accounts.length,
+          },
+        },
+      });
+      runId = blockedRun.id;
+    } catch {
+      // ignore logging failure and still return guard block
+    }
+
+    return baseFailure("BUDGET_GUARD_BLOCK", budgetGuardMessage(budget), runId, budget);
+  }
+
+  let run;
+
+  try {
+    run = await db.ingestionRun.create({
+      data: {
+        provider,
+        status: IngestionStatus.RUNNING,
+        notes: options.initiatedBy ? `initiatedBy=${options.initiatedBy}` : undefined,
+        metadata: {
+          budget,
+          activeAccounts: accounts.length,
+        },
+      },
+    });
+  } catch {
+    return baseFailure("DB_UNREACHABLE", "Unable to initialize ingestion run record.", "unavailable", budget);
+  }
+
+  const result: IngestionOutcome = {
+    runId: run.id,
+    status: IngestionStatus.SUCCESS,
+    accountsProcessed: 0,
+    postsFetched: 0,
+    postsInserted: 0,
+    summariesGenerated: 0,
+    errors: [],
+    errorCode: "NONE",
+    budget,
+  };
+
+  try {
+    const providerImpl = getProvider(provider);
 
     for (const account of accounts) {
       result.accountsProcessed += 1;
@@ -165,6 +230,7 @@ export async function ingestLatestPosts(options: IngestOptions = {}): Promise<In
           summariesGenerated: result.summariesGenerated,
           provider: provider,
           errorCount: result.errors.length,
+          budget,
         },
       },
     });
@@ -180,6 +246,6 @@ export async function ingestLatestPosts(options: IngestOptions = {}): Promise<In
       },
     });
 
-    return baseFailure("INGESTION_FAILURE", "Ingestion processing failed.");
+    return baseFailure("INGESTION_FAILURE", "Ingestion processing failed.", run.id, budget);
   }
 }

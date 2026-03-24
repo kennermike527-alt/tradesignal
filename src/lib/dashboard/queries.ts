@@ -2,6 +2,7 @@ import { AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client
 import { subHours } from "date-fns";
 import { db } from "@/lib/db";
 import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
+import { cadenceLabelForAccounts } from "@/lib/ingestion/budget-guard";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
 import type { DashboardPayload, DashboardPost, DashboardStats, IntelligenceCenter, SourcePlatform } from "@/lib/types";
 
@@ -157,7 +158,7 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
         dbMessage: "Database connected.",
         providerLabel: SocialProvider.X,
         summaryLabel: process.env.OPENAI_API_KEY ? "OpenAI + fallback" : "Heuristic fallback",
-        cadenceLabel: "Manual ingest + /api/ingest scheduler",
+        cadenceLabel: cadenceLabelForAccounts(accounts.length),
         lastRefreshAt: new Date(),
       },
     };

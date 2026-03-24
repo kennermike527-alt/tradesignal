@@ -86,7 +86,12 @@ export type DashboardPayload = {
   system: TerminalSystemStatus;
 };
 
-export type IngestionErrorCode = "NONE" | "DB_URL_MISSING" | "DB_UNREACHABLE" | "INGESTION_FAILURE";
+export type IngestionErrorCode =
+  | "NONE"
+  | "DB_URL_MISSING"
+  | "DB_UNREACHABLE"
+  | "INGESTION_FAILURE"
+  | "BUDGET_GUARD_BLOCK";
 
 export type IngestionOutcome = {
   runId: string;
@@ -97,4 +102,11 @@ export type IngestionOutcome = {
   summariesGenerated: number;
   errors: string[];
   errorCode: IngestionErrorCode;
+  budget?: {
+    monthlyBudgetUsd: number;
+    cadenceMinutes: number;
+    estimatedCostPerRunUsd: number;
+    projectedMonthlyCostUsd: number;
+    minimumCadenceMinutes: number;
+  };
 };
