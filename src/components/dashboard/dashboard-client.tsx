@@ -137,6 +137,53 @@ function postMatchesKeyTopic(post: DashboardPost, topic: string) {
   return text.includes(normalized);
 }
 
+function tokenizeAngle(value: string) {
+  const STOPWORDS = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "what",
+    "where",
+    "should",
+    "could",
+    "would",
+    "your",
+    "their",
+    "about",
+    "against",
+    "under",
+    "over",
+    "around",
+    "while",
+    "have",
+    "has",
+    "had",
+    "is",
+    "are",
+  ]);
+
+  return (value.toLowerCase().match(/[a-z][a-z0-9-]{2,}/g) || []).filter((token) => !STOPWORDS.has(token));
+}
+
+function scoreEngageAngleToPost(angle: string, post: DashboardPost) {
+  const terms = tokenizeAngle(angle);
+  if (terms.length === 0) return 0;
+
+  const text = `${post.content} ${post.summary?.summary ?? ""} ${post.account.handle} ${post.account.tags.join(" ")}`.toLowerCase();
+
+  let score = 0;
+  for (const term of terms) {
+    if (text.includes(term)) score += 1;
+  }
+
+  return score;
+}
+
 function dbTone(code: DashboardPayload["system"]["dbCode"]) {
   if (code === "CONNECTED") return "text-emerald-300 border-emerald-600/40 bg-emerald-500/10";
   if (code === "MISSING_DATABASE_URL") return "text-amber-300 border-amber-600/40 bg-amber-500/10";
@@ -198,6 +245,7 @@ export function DashboardClient({ payload }: Props) {
   const [xComposeMessage, setXComposeMessage] = React.useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [xActionToast, setXActionToast] = React.useState<string | null>(null);
   const [pendingRespondPost, setPendingRespondPost] = React.useState<DashboardPost | null>(null);
+  const [engageTargetPostId, setEngageTargetPostId] = React.useState<string | null>(null);
   const [xPending, startXTransition] = React.useTransition();
 
   const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
@@ -613,6 +661,43 @@ export function DashboardClient({ payload }: Props) {
       });
     },
     [xSession, startXTransition]
+  );
+
+  const engageAngleTargets = React.useMemo(() => {
+    return summaryEngageNow.map((angle) => {
+      let bestPost: DashboardPost | null = null;
+      let bestScore = -1;
+
+      for (const post of engageNow) {
+        const score = scoreEngageAngleToPost(angle, post);
+        if (score > bestScore) {
+          bestScore = score;
+          bestPost = post;
+        }
+      }
+
+      return {
+        angle,
+        post: bestPost,
+      };
+    });
+  }, [summaryEngageNow, engageNow]);
+
+  React.useEffect(() => {
+    if (engageNow.length === 0) {
+      if (engageTargetPostId !== null) setEngageTargetPostId(null);
+      return;
+    }
+
+    const exists = engageNow.some((post) => post.id === engageTargetPostId);
+    if (!exists) {
+      setEngageTargetPostId(engageNow[0].id);
+    }
+  }, [engageNow, engageTargetPostId]);
+
+  const selectedEngagePost = React.useMemo(
+    () => engageNow.find((post) => post.id === engageTargetPostId) ?? engageNow[0] ?? null,
+    [engageNow, engageTargetPostId]
   );
 
   return (
@@ -1307,30 +1392,84 @@ export function DashboardClient({ payload }: Props) {
                 <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Engage now</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 p-2 pt-0">
-                {summaryEngageNow.length > 0 ? (
-                  summaryEngageNow.slice(0, 4).map((angle, index) => (
-                    <div key={`angle-${index}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs text-muted-foreground">
-                      {angle}
+                {engageAngleTargets.length > 0 ? (
+                  engageAngleTargets.slice(0, 4).map((item, index) => {
+                    const active = item.post?.id === selectedEngagePost?.id;
+
+                    return (
+                      <button
+                        key={`angle-${index}`}
+                        type="button"
+                        onClick={() => {
+                          if (item.post) setEngageTargetPostId(item.post.id);
+                        }}
+                        className={`w-full rounded border p-2 text-left text-xs transition ${
+                          active
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border/70 bg-background/40 text-muted-foreground"
+                        }`}
+                      >
+                        <p>{item.angle}</p>
+                        {item.post ? (
+                          <p className="mt-1 text-[10px] text-muted-foreground">Target: @{item.post.account.handle}</p>
+                        ) : (
+                          <p className="mt-1 text-[10px] text-muted-foreground">No matching post in current scope.</p>
+                        )}
+                      </button>
+                    );
+                  })
+                ) : null}
+
+                {selectedEngagePost ? (
+                  <div className="rounded border border-primary/30 bg-primary/10 p-2 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium">Tweet to engage: @{selectedEngagePost.account.handle}</p>
+                      <a
+                        href={selectedEngagePost.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] text-primary hover:underline"
+                      >
+                        Open tweet
+                      </a>
                     </div>
-                  ))
+                    <p className="mt-1 text-muted-foreground">{truncate(selectedEngagePost.content, 160)}</p>
+                  </div>
                 ) : null}
 
                 {engageNow.length > 0 ? (
-                  engageNow.slice(0, 6).map((post) => (
-                    <div key={`engage-${post.id}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium">@{post.account.handle}</p>
-                        <button
-                          type="button"
-                          onClick={() => openRespondFlow(post)}
-                          className="inline-flex h-6 items-center gap-1 rounded border border-border/70 bg-background/70 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-                        >
-                          {xSession ? "Respond" : "Login to respond"}
-                        </button>
+                  engageNow.slice(0, 6).map((post) => {
+                    const active = selectedEngagePost?.id === post.id;
+
+                    return (
+                      <div
+                        key={`engage-${post.id}`}
+                        className={`rounded border p-2 text-xs ${
+                          active
+                            ? "border-primary/40 bg-primary/10"
+                            : "border-border/70 bg-background/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEngageTargetPostId(post.id)}
+                            className="text-left font-medium"
+                          >
+                            @{post.account.handle}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openRespondFlow(post)}
+                            className="inline-flex h-6 items-center gap-1 rounded border border-border/70 bg-background/70 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                          >
+                            {xSession ? "Respond" : "Login to respond"}
+                          </button>
+                        </div>
+                        <p className="mt-0.5 text-muted-foreground">{truncate(post.summary?.summary ?? post.content, 120)}</p>
                       </div>
-                      <p className="mt-0.5 text-muted-foreground">{truncate(post.summary?.summary ?? post.content, 120)}</p>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : summaryEngageNow.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No immediate opportunities in current scope.</p>
                 ) : null}
