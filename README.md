@@ -43,11 +43,11 @@ This is not an admin panel and not a KPI-first dashboard. The core object is the
   - **TWIN** only when content includes: `twin foundation`, `@twinfoundation`, `#twinfoundation`, or `twinfoundation`
 
 4. **Right intelligence sidebar**
-   - engage-now queue
-   - emerging narratives
-   - high-velocity posts
-   - priority mentions
-   - compact ingestion-run status
+   - AI narrative command layer (24h / 3d windows)
+   - emerging narratives (cluster summaries)
+   - key topics (filtered terms excluding baseline tokens)
+   - engage-now actions (derived from engagement angles)
+   - high-velocity support + ingestion run status
 
 ---
 
@@ -92,6 +92,10 @@ src/
       mock-x-provider.ts
       index.ts
     summary/summary-service.ts
+    summarization/
+      context-summarization-service.ts
+    context/
+      context-resolver.ts
   scripts/
     db-setup.ts
     db-status.ts
@@ -123,6 +127,10 @@ Optional:
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
 - `INGESTION_SECRET`
+- `CONTEXT_SUMMARY_PROVIDER` (`openai` | `heuristic`)
+- `CONTEXT_SUMMARY_MODEL`
+- `CONTEXT_SUMMARY_REFRESH_MINUTES`
+- `CONTEXT_SUMMARY_MAX_POSTS`
 
 Budget guard (recommended defaults for ~$350/month target):
 
@@ -187,8 +195,48 @@ Open: `http://localhost:3000`
 ## Migrations and seed behavior
 
 - Baseline migration is committed at `prisma/migrations/0001_init`.
+- Watchlist account migration: `prisma/migrations/0002_watchlist_accounts`.
+- Context summary storage migration: `prisma/migrations/0003_context_summaries`.
 - Seed script can be used for local smoke testing, but production/live dashboards are intended to run in **live-only mode**.
 - No curated fallback account list is injected into runtime dashboard views.
+
+---
+
+## Context summarization service (AI command layer)
+
+The reusable service lives at:
+
+- `src/lib/summarization/context-summarization-service.ts`
+
+It performs:
+
+1. Context-scoped post selection (center + platform + window)
+2. Topic clustering (keyword baseline)
+3. AI structured summarization (OpenAI by default, heuristic fallback)
+4. Storage in `ContextSummary` table
+5. Cache reuse: does not regenerate if a recent summary exists for same context+window (unless forced refresh)
+
+### Prompt template (exact)
+
+The model receives this strict prompt structure (template version `v1`):
+
+- role: operations-focused social intelligence analyst
+- constraints:
+  - no platform comparisons
+  - no fluff
+  - ignore baseline labels as topic names
+  - strict JSON output
+- context block:
+  - center
+  - platform
+  - time window
+  - pre-extracted key topics
+- schema block requiring:
+  - `global_summary`
+  - `topics[]` with `topic_name`, `summary`, `tone`, `why_it_matters`, `engagement_angles`, `respond_to_handles`, `key_terms`, `post_count`
+- cluster input payload with representative posts/terms/handles
+
+Use `getContextSummaryPromptPreview()` to inspect active provider/model/config at runtime.
 
 ---
 

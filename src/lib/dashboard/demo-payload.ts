@@ -15,6 +15,7 @@ export function buildDemoPayload(options: BuildDemoOptions): DashboardPayload {
     accounts: [],
     categories: Object.values(AccountCategory),
     watchlistAssignments: [],
+    initialContextSummary: null,
     stats: {
       trackedAccounts: 0,
       activeAccounts: 0,

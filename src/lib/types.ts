@@ -6,6 +6,39 @@ export type IntelligenceCenter = "IOTA" | "TWIN";
 export type SourcePlatform = "X" | "LINKEDIN";
 export type WatchlistKey = "all" | "priority" | "competitors" | "founders" | "media" | "ecosystem";
 
+export type ContextSummaryTone = "positive" | "negative" | "neutral" | "mixed";
+
+export type NarrativeTopicSummary = {
+  topic_name: string;
+  summary: string;
+  tone: ContextSummaryTone;
+  why_it_matters: string;
+  engagement_angles: string[];
+  respond_to_handles: string[];
+  key_terms: string[];
+  post_count: number;
+};
+
+export type GlobalNarrativeSummary = {
+  key_narratives_right_now: string[];
+  gaining_momentum: string[];
+  fading: string[];
+  attention_concentrated: string[];
+  top_opportunities_to_engage: string[];
+};
+
+export type ContextNarrativeSummary = {
+  center: IntelligenceCenter;
+  sourcePlatform: SourcePlatform;
+  windowHours: number;
+  postCount: number;
+  generatedAt: Date;
+  model: string;
+  keyTopics: string[];
+  global_summary: GlobalNarrativeSummary;
+  topics: NarrativeTopicSummary[];
+};
+
 export type NormalizedSocialPost = {
   provider: SocialProvider;
   externalPostId: string;
@@ -93,6 +126,7 @@ export type DashboardPayload = {
   accounts: DashboardAccount[];
   categories: AccountCategory[];
   watchlistAssignments: WatchlistAssignment[];
+  initialContextSummary: ContextNarrativeSummary | null;
   stats: DashboardStats;
   ingestionRuns: IngestionRunPreview[];
   system: TerminalSystemStatus;

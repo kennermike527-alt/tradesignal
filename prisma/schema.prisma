@@ -130,3 +130,17 @@ model IngestionRun {
   @@index([startedAt(sort: Desc)])
   @@index([status])
 }
+
+model ContextSummary {
+  id             String             @id @default(cuid())
+  center         IntelligenceCenter
+  sourcePlatform SourcePlatform
+  windowHours    Int
+  postCount      Int                @default(0)
+  summaryJson    Json
+  keyTopics      String[]           @default([])
+  generatedAt    DateTime           @default(now())
+  createdAt      DateTime           @default(now())
+
+  @@index([center, sourcePlatform, windowHours, generatedAt(sort: Desc)])
+}

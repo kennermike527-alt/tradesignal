@@ -2,28 +2,12 @@ import { AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client
 import { subHours } from "date-fns";
 import { db } from "@/lib/db";
 import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
+import { detectSourcePlatformFromUrl, pickCenterFromText } from "@/lib/context/context-resolver";
 import { cadenceLabelForAccounts } from "@/lib/ingestion/budget-guard";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
+import { getOrCreateContextSummary } from "@/lib/summarization/context-summarization-service";
 import { fromDbWatchlistKey } from "@/lib/watchlists";
-import type { DashboardPayload, DashboardPost, DashboardStats, IntelligenceCenter, SourcePlatform } from "@/lib/types";
-
-function pickCenter(postText: string, handle: string): IntelligenceCenter | null {
-  const text = `${postText} ${handle}`.toLowerCase();
-
-  const isIota = /(^|\W)(iota|@iota|#iota|iota cash stack)(\W|$)/i.test(text);
-  if (isIota) return "IOTA";
-
-  const isTwinFoundation = /(^|\W)(twin foundation|@twinfoundation|#twinfoundation|twinfoundation)(\W|$)/i.test(text);
-  if (isTwinFoundation) return "TWIN";
-
-  return null;
-}
-
-function detectSourcePlatform(sourceUrl: string): SourcePlatform {
-  const lower = sourceUrl.toLowerCase();
-  if (lower.includes("linkedin.com")) return "LINKEDIN";
-  return "X";
-}
+import type { DashboardPayload, DashboardPost, DashboardStats } from "@/lib/types";
 
 function buildStats(posts: DashboardPost[], activeAccounts: number, latestStatus: IngestionStatus | null, latestAt: Date | null): DashboardStats {
   const now = Date.now();
@@ -62,7 +46,7 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
   }
 
   try {
-    const [postsRaw, accounts, watchlistRows, latestRun, ingestionRuns] = await Promise.all([
+    const [postsRaw, accounts, watchlistRows, latestRun, ingestionRuns, initialContextSummary] = await Promise.all([
       db.post.findMany({
         orderBy: { postedAt: "desc" },
         take: limit,
@@ -126,11 +110,16 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
           notes: true,
         },
       }),
+      getOrCreateContextSummary({
+        center: "IOTA",
+        sourcePlatform: "X",
+        windowHours: 24,
+      }),
     ]);
 
     const posts: DashboardPost[] = postsRaw.map((post) => {
-      const sourcePlatform = detectSourcePlatform(post.sourceUrl);
-      const center = pickCenter(`${post.content} ${post.summary?.summary ?? ""}`, post.account.handle);
+      const sourcePlatform = detectSourcePlatformFromUrl(post.sourceUrl);
+      const center = pickCenterFromText(`${post.content} ${post.summary?.summary ?? ""}`, post.account.handle);
 
       return {
         id: post.id,
@@ -174,6 +163,7 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       accounts,
       categories: Object.values(AccountCategory),
       watchlistAssignments,
+      initialContextSummary,
       stats,
       ingestionRuns,
       system: {

@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Plus,
   Radar,
+  RefreshCw,
   Repeat2,
   Sparkles,
   Target,
@@ -22,8 +23,15 @@ import {
   Zap,
 } from "lucide-react";
 import { AccountCategory } from "@prisma/client";
-import type { DashboardPayload, DashboardPost, IntelligenceCenter, SourcePlatform, WatchlistKey } from "@/lib/types";
-import { addWatchlistAccountAction } from "@/app/actions";
+import type {
+  ContextNarrativeSummary,
+  DashboardPayload,
+  DashboardPost,
+  IntelligenceCenter,
+  SourcePlatform,
+  WatchlistKey,
+} from "@/lib/types";
+import { addWatchlistAccountAction, getContextSummaryAction, refreshContextSummaryAction } from "@/app/actions";
 import { AddWatchlistAccountDialog } from "@/components/dashboard/add-watchlist-account-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -114,6 +122,8 @@ export function DashboardClient({ payload }: Props) {
   });
   const sourceTab = sourceByCenter[centerFocus];
 
+  const summaryCacheRef = React.useRef<Record<string, ContextNarrativeSummary>>({});
+
   const [watchlist, setWatchlist] = React.useState<WatchlistKey>("all");
   const [accountId, setAccountId] = React.useState<string>("all");
   const [category, setCategory] = React.useState<string>("all");
@@ -136,6 +146,13 @@ export function DashboardClient({ payload }: Props) {
   >(null);
   const [watchlistToast, setWatchlistToast] = React.useState<string | null>(null);
   const [watchlistPending, startWatchlistTransition] = React.useTransition();
+
+  const [summaryWindowHours, setSummaryWindowHours] = React.useState<24 | 72>(24);
+  const [contextSummary, setContextSummary] = React.useState<ContextNarrativeSummary | null>(
+    payload.initialContextSummary
+  );
+  const [summaryError, setSummaryError] = React.useState<string | null>(null);
+  const [summaryPending, startSummaryTransition] = React.useTransition();
 
   const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
 
@@ -171,6 +188,40 @@ export function DashboardClient({ payload }: Props) {
 
     return map;
   }, [contextWatchlistAssignments]);
+
+  const summaryKey = `${centerFocus}:${sourceTab}:${summaryWindowHours}`;
+
+  React.useEffect(() => {
+    if (!payload.initialContextSummary) return;
+    const key = `${payload.initialContextSummary.center}:${payload.initialContextSummary.sourcePlatform}:${payload.initialContextSummary.windowHours}`;
+    summaryCacheRef.current[key] = payload.initialContextSummary;
+  }, [payload.initialContextSummary]);
+
+  React.useEffect(() => {
+    const cached = summaryCacheRef.current[summaryKey];
+    if (cached) {
+      setContextSummary(cached);
+      setSummaryError(null);
+      return;
+    }
+
+    startSummaryTransition(async () => {
+      const result = await getContextSummaryAction({
+        center: centerFocus,
+        sourcePlatform: sourceTab,
+        windowHours: summaryWindowHours,
+      });
+
+      if (!result.ok || !result.summary) {
+        setSummaryError(result.message || "Unable to load narrative command layer.");
+        return;
+      }
+
+      summaryCacheRef.current[summaryKey] = result.summary;
+      setContextSummary(result.summary);
+      setSummaryError(null);
+    });
+  }, [centerFocus, sourceTab, summaryWindowHours, summaryKey, startSummaryTransition]);
 
   React.useEffect(() => {
     if (accountId === "all") return;
@@ -267,12 +318,6 @@ export function DashboardClient({ payload }: Props) {
     return [...filtered].sort((a, b) => engagementScore(b) - engagementScore(a)).slice(0, 6);
   }, [filtered]);
 
-  const priorityMentions = React.useMemo(() => {
-    return [...filtered]
-      .filter((post) => post.account.tags.some((tag) => ["launch", "policy", "founder", "ecosystem", "iota", "twin"].includes(tag)))
-      .slice(0, 6);
-  }, [filtered]);
-
   const resetFilters = () => {
     setWatchlist("all");
     setAccountId("all");
@@ -343,6 +388,29 @@ export function DashboardClient({ payload }: Props) {
 
   const dialogWatchlistLabel =
     watchlists.find((item) => item.key === watchlistDialog.watchlistKey)?.label ?? "Watchlist";
+
+  const refreshContextSummary = React.useCallback(() => {
+    startSummaryTransition(async () => {
+      const result = await refreshContextSummaryAction({
+        center: centerFocus,
+        sourcePlatform: sourceTab,
+        windowHours: summaryWindowHours,
+      });
+
+      if (!result.ok || !result.summary) {
+        setSummaryError(result.message || "Unable to refresh narrative command layer.");
+        return;
+      }
+
+      summaryCacheRef.current[summaryKey] = result.summary;
+      setContextSummary(result.summary);
+      setSummaryError(null);
+    });
+  }, [centerFocus, sourceTab, summaryWindowHours, summaryKey, startSummaryTransition]);
+
+  const summaryTopics = contextSummary?.topics ?? [];
+  const summaryKeyTopics = contextSummary?.keyTopics ?? [];
+  const summaryEngageNow = contextSummary?.global_summary.top_opportunities_to_engage ?? [];
 
   return (
     <main className="min-h-screen bg-background px-3 py-3 sm:px-4 lg:px-5">
@@ -834,19 +902,44 @@ export function DashboardClient({ payload }: Props) {
           <aside className="space-y-2">
             <Card className="border-border/70 bg-card/70">
               <CardHeader className="pb-2">
-                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Engage now</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Narrative command layer</CardTitle>
+                  <button
+                    type="button"
+                    onClick={refreshContextSummary}
+                    disabled={summaryPending}
+                    className="inline-flex h-7 items-center gap-1 rounded border border-border/70 bg-background/60 px-2 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-60"
+                  >
+                    <RefreshCw className={`size-3 ${summaryPending ? "animate-spin" : ""}`} /> Refresh
+                  </button>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-1 p-2 pt-0">
-                {engageNow.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No immediate opportunities in current scope.</p>
-                ) : (
-                  engageNow.map((post) => (
-                    <div key={`engage-${post.id}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
-                      <p className="font-medium">@{post.account.handle}</p>
-                      <p className="mt-0.5 text-muted-foreground">{truncate(post.summary?.summary ?? post.content, 120)}</p>
-                    </div>
-                  ))
-                )}
+              <CardContent className="space-y-2 p-2 pt-0">
+                <div className="inline-flex rounded border border-border/70 bg-background/50 p-0.5 text-[11px]">
+                  {[24, 72].map((hours) => (
+                    <button
+                      key={hours}
+                      onClick={() => setSummaryWindowHours(hours as 24 | 72)}
+                      className={`rounded px-2 py-1 ${
+                        summaryWindowHours === hours ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {hours === 24 ? "24h" : "3d"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {contextSummary
+                    ? `Generated ${formatDistanceToNowStrict(new Date(contextSummary.generatedAt), { addSuffix: true })} · ${
+                        contextSummary.postCount
+                      } post(s)`
+                    : "No narrative summary generated yet."}
+                </p>
+                {summaryError ? (
+                  <div className="rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200">
+                    {summaryError}
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -855,12 +948,63 @@ export function DashboardClient({ payload }: Props) {
                 <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Emerging narratives</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 p-2 pt-0">
-                {narrativeCounts.slice(0, 6).map((item) => (
-                  <div key={item.id} className="flex items-center justify-between rounded border border-border/70 bg-background/40 px-2 py-1 text-xs">
-                    <span>{item.label}</span>
-                    <span className="text-muted-foreground">{item.count}</span>
-                  </div>
-                ))}
+                {summaryTopics.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No clustered narratives in the selected window.</p>
+                ) : (
+                  summaryTopics.slice(0, 6).map((topic) => (
+                    <div key={topic.topic_name} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-medium">{topic.topic_name}</p>
+                        <span className="text-[10px] uppercase text-muted-foreground">{topic.tone}</span>
+                      </div>
+                      <p className="mt-1 text-muted-foreground">{truncate(topic.summary, 120)}</p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/70 bg-card/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Key topics</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-1 p-2 pt-0">
+                {summaryKeyTopics.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No high-signal key terms yet.</p>
+                ) : (
+                  summaryKeyTopics.slice(0, 14).map((topic) => (
+                    <span
+                      key={topic}
+                      className="inline-flex items-center rounded border border-border/70 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                    >
+                      {topic}
+                    </span>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/70 bg-card/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Engage now</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 p-2 pt-0">
+                {summaryEngageNow.length > 0 ? (
+                  summaryEngageNow.slice(0, 6).map((angle, index) => (
+                    <div key={`angle-${index}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs text-muted-foreground">
+                      {angle}
+                    </div>
+                  ))
+                ) : engageNow.length > 0 ? (
+                  engageNow.map((post) => (
+                    <div key={`engage-${post.id}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
+                      <p className="font-medium">@{post.account.handle}</p>
+                      <p className="mt-0.5 text-muted-foreground">{truncate(post.summary?.summary ?? post.content, 120)}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">No immediate opportunities in current scope.</p>
+                )}
               </CardContent>
             </Card>
 
@@ -876,20 +1020,6 @@ export function DashboardClient({ payload }: Props) {
                       <span className="text-rose-300">{numberFmt.format(engagementScore(post))}</span>
                     </div>
                     <p className="mt-0.5 text-muted-foreground">{truncate(post.content, 90)}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/70 bg-card/70">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Priority mentions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 p-2 pt-0">
-                {priorityMentions.slice(0, 5).map((post) => (
-                  <div key={`priority-${post.id}`} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
-                    <p className="font-medium">@{post.account.handle}</p>
-                    <p className="mt-0.5 text-muted-foreground">{truncate(post.summary?.summary ?? post.content, 100)}</p>
                   </div>
                 ))}
               </CardContent>

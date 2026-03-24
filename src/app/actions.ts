@@ -4,8 +4,12 @@ import { IntelligenceCenter, Prisma, SourcePlatform } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { ingestLatestPosts } from "@/lib/ingestion/ingest-service";
+import {
+  getContextSummaryPromptPreview,
+  getOrCreateContextSummary,
+} from "@/lib/summarization/context-summarization-service";
 import { isWatchlistKey, toDbWatchlistKey } from "@/lib/watchlists";
-import type { WatchlistAssignment, WatchlistKey } from "@/lib/types";
+import type { ContextNarrativeSummary, WatchlistAssignment, WatchlistKey } from "@/lib/types";
 
 type ManualIngestResponse = {
   ok: boolean;
@@ -25,6 +29,19 @@ type AddWatchlistAccountResponse = {
   ok: boolean;
   message: string;
   assignment?: WatchlistAssignment;
+};
+
+type ContextSummaryInput = {
+  center: "IOTA" | "TWIN";
+  sourcePlatform: "X" | "LINKEDIN";
+  windowHours?: number;
+};
+
+type ContextSummaryResponse = {
+  ok: boolean;
+  message?: string;
+  summary?: ContextNarrativeSummary;
+  promptConfig?: ReturnType<typeof getContextSummaryPromptPreview>;
 };
 
 function userMessageFromCode(code: string) {
@@ -97,6 +114,12 @@ function parseCenter(value: string) {
 function parseSourcePlatform(value: string) {
   if (value === SourcePlatform.X || value === SourcePlatform.LINKEDIN) return value;
   return null;
+}
+
+function normalizeWindowHours(value: number | undefined) {
+  if (!value || Number.isNaN(value)) return 24;
+  if (value <= 24) return 24;
+  return 72;
 }
 
 export async function runManualIngestionAction(): Promise<ManualIngestResponse> {
@@ -209,6 +232,66 @@ export async function addWatchlistAccountAction(input: AddWatchlistAccountInput)
     return {
       ok: false,
       message: "Unable to add account right now. Please retry.",
+    };
+  }
+}
+
+export async function getContextSummaryAction(input: ContextSummaryInput): Promise<ContextSummaryResponse> {
+  const center = parseCenter(input.center);
+  const sourcePlatform = parseSourcePlatform(input.sourcePlatform);
+
+  if (!center || !sourcePlatform) {
+    return { ok: false, message: "Invalid context for summary request." };
+  }
+
+  try {
+    const summary = await getOrCreateContextSummary({
+      center,
+      sourcePlatform,
+      windowHours: normalizeWindowHours(input.windowHours),
+      forceRefresh: false,
+    });
+
+    return {
+      ok: true,
+      summary,
+      promptConfig: getContextSummaryPromptPreview(),
+    };
+  } catch {
+    return {
+      ok: false,
+      message: "Unable to generate context summary right now.",
+    };
+  }
+}
+
+export async function refreshContextSummaryAction(input: ContextSummaryInput): Promise<ContextSummaryResponse> {
+  const center = parseCenter(input.center);
+  const sourcePlatform = parseSourcePlatform(input.sourcePlatform);
+
+  if (!center || !sourcePlatform) {
+    return { ok: false, message: "Invalid context for summary refresh." };
+  }
+
+  try {
+    const summary = await getOrCreateContextSummary({
+      center,
+      sourcePlatform,
+      windowHours: normalizeWindowHours(input.windowHours),
+      forceRefresh: true,
+    });
+
+    revalidatePath("/");
+
+    return {
+      ok: true,
+      summary,
+      promptConfig: getContextSummaryPromptPreview(),
+    };
+  } catch {
+    return {
+      ok: false,
+      message: "Unable to refresh context summary right now.",
     };
   }
 }
