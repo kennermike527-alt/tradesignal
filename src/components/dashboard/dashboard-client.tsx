@@ -626,17 +626,6 @@ export function DashboardClient({ payload }: Props) {
               </CardContent>
             </Card>
 
-            <Card className="border-border/70 bg-card/70">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Saved views</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 p-2 pt-0 text-xs text-muted-foreground">
-                <p>• Engage now</p>
-                <p>• Competitor escalation</p>
-                <p>• Founder narrative shift</p>
-                <p>• Distribution windows</p>
-              </CardContent>
-            </Card>
           </aside>
 
           <section className="space-y-2">
