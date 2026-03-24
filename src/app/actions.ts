@@ -3,7 +3,9 @@
 import { IntelligenceCenter, Prisma, SourcePlatform } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { buildDemoContextSummaryForContext } from "@/lib/dashboard/demo-payload";
 import { ingestLatestPosts } from "@/lib/ingestion/ingest-service";
+import { getDatabaseHealth } from "@/lib/runtime/db-health";
 import {
   getContextSummaryPromptPreview,
   getOrCreateContextSummary,
@@ -244,11 +246,23 @@ export async function getContextSummaryAction(input: ContextSummaryInput): Promi
     return { ok: false, message: "Invalid context for summary request." };
   }
 
+  const windowHours = normalizeWindowHours(input.windowHours);
+  const dbHealth = await getDatabaseHealth();
+
+  if (!dbHealth.ok) {
+    return {
+      ok: true,
+      summary: buildDemoContextSummaryForContext(center, sourcePlatform, windowHours),
+      promptConfig: getContextSummaryPromptPreview(),
+      message: "Database unavailable, using dummy summary layer.",
+    };
+  }
+
   try {
     const summary = await getOrCreateContextSummary({
       center,
       sourcePlatform,
-      windowHours: normalizeWindowHours(input.windowHours),
+      windowHours,
       forceRefresh: false,
     });
 
@@ -273,11 +287,23 @@ export async function refreshContextSummaryAction(input: ContextSummaryInput): P
     return { ok: false, message: "Invalid context for summary refresh." };
   }
 
+  const windowHours = normalizeWindowHours(input.windowHours);
+  const dbHealth = await getDatabaseHealth();
+
+  if (!dbHealth.ok) {
+    return {
+      ok: true,
+      summary: buildDemoContextSummaryForContext(center, sourcePlatform, windowHours),
+      promptConfig: getContextSummaryPromptPreview(),
+      message: "Database unavailable, refreshed dummy summary layer.",
+    };
+  }
+
   try {
     const summary = await getOrCreateContextSummary({
       center,
       sourcePlatform,
-      windowHours: normalizeWindowHours(input.windowHours),
+      windowHours,
       forceRefresh: true,
     });
 

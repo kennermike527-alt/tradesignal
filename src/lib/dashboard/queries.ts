@@ -117,6 +117,13 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       }),
     ]);
 
+    if (postsRaw.length === 0) {
+      return buildDemoPayload({
+        dbCode: "CONNECTED",
+        dbMessage: "Database is reachable, but no live posts are available yet.",
+      });
+    }
+
     const posts: DashboardPost[] = postsRaw.map((post) => {
       const sourcePlatform = detectSourcePlatformFromUrl(post.sourceUrl);
       const center = pickCenterFromText(`${post.content} ${post.summary?.summary ?? ""}`, post.account.handle);
