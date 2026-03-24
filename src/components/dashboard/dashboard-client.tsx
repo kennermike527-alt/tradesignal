@@ -13,6 +13,7 @@ import {
   Flame,
   Layers,
   MessageSquare,
+  Plus,
   Radar,
   Repeat2,
   Sparkles,
@@ -21,7 +22,9 @@ import {
   Zap,
 } from "lucide-react";
 import { AccountCategory } from "@prisma/client";
-import type { DashboardPayload, DashboardPost, IntelligenceCenter, SourcePlatform } from "@/lib/types";
+import type { DashboardPayload, DashboardPost, IntelligenceCenter, SourcePlatform, WatchlistKey } from "@/lib/types";
+import { addWatchlistAccountAction } from "@/app/actions";
+import { AddWatchlistAccountDialog } from "@/components/dashboard/add-watchlist-account-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,7 +37,6 @@ type Props = {
 };
 
 type TimeWindow = "2h" | "24h" | "72h" | "7d" | "all";
-type WatchlistKey = "all" | "priority" | "competitors" | "founders" | "media" | "ecosystem";
 
 const watchlists: Array<{ key: WatchlistKey; label: string; description: string }> = [
   { key: "all", label: "All signals", description: "Entire monitored stream" },
@@ -57,6 +59,10 @@ const narrativePatterns = [
 const centers: IntelligenceCenter[] = ["IOTA", "TWIN"];
 const sources: SourcePlatform[] = ["X", "LINKEDIN"];
 const numberFmt = new Intl.NumberFormat();
+
+function normalizeHandleForMatch(value: string) {
+  return value.trim().replace(/^@+/, "").toLowerCase();
+}
 
 function engagementScore(post: DashboardPost) {
   return post.likeCount + post.replyCount * 2 + post.repostCount * 3 + post.quoteCount * 2;
@@ -99,6 +105,8 @@ function dbTone(code: DashboardPayload["system"]["dbCode"]) {
 export function DashboardClient({ payload }: Props) {
   const { posts, categories, ingestionRuns, system } = payload;
 
+  const [watchlistAssignments, setWatchlistAssignments] = React.useState(payload.watchlistAssignments);
+
   const [centerFocus, setCenterFocus] = React.useState<IntelligenceCenter>("IOTA");
   const [sourceByCenter, setSourceByCenter] = React.useState<Record<IntelligenceCenter, SourcePlatform>>({
     IOTA: "X",
@@ -120,6 +128,15 @@ export function DashboardClient({ payload }: Props) {
   const [assignedPostIds, setAssignedPostIds] = React.useState<string[]>([]);
   const [taggedPostIds, setTaggedPostIds] = React.useState<string[]>([]);
 
+  const [watchlistDialog, setWatchlistDialog] = React.useState<{ open: boolean; watchlistKey: WatchlistKey | null }>(
+    { open: false, watchlistKey: null }
+  );
+  const [watchlistDialogMessage, setWatchlistDialogMessage] = React.useState<
+    { kind: "success" | "error"; text: string } | null
+  >(null);
+  const [watchlistToast, setWatchlistToast] = React.useState<string | null>(null);
+  const [watchlistPending, startWatchlistTransition] = React.useTransition();
+
   const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
 
   const sourceScopedPosts = React.useMemo(
@@ -131,6 +148,29 @@ export function DashboardClient({ payload }: Props) {
     const ids = new Set(sourceScopedPosts.map((post) => post.accountId));
     return [...new Map(sourceScopedPosts.map((post) => [post.accountId, post.account])).values()].filter((acc) => ids.has(acc.id));
   }, [sourceScopedPosts]);
+
+  const contextWatchlistAssignments = React.useMemo(() => {
+    return watchlistAssignments.filter(
+      (item) => item.center === centerFocus && item.sourcePlatform === sourceTab
+    );
+  }, [watchlistAssignments, centerFocus, sourceTab]);
+
+  const watchlistAccountsByKey = React.useMemo(() => {
+    const map: Record<WatchlistKey, Array<(typeof contextWatchlistAssignments)[number]>> = {
+      all: [],
+      priority: [],
+      competitors: [],
+      founders: [],
+      media: [],
+      ecosystem: [],
+    };
+
+    for (const assignment of contextWatchlistAssignments) {
+      map[assignment.watchlistKey].push(assignment);
+    }
+
+    return map;
+  }, [contextWatchlistAssignments]);
 
   React.useEffect(() => {
     if (accountId === "all") return;
@@ -167,9 +207,19 @@ export function DashboardClient({ payload }: Props) {
       .sort((a, b) => b.count - a.count);
   }, [sourceScopedPosts]);
 
+  const activeWatchlistHandleSet = React.useMemo(() => {
+    return new Set(watchlistAccountsByKey[watchlist].map((item) => normalizeHandleForMatch(item.handle)));
+  }, [watchlistAccountsByKey, watchlist]);
+
   const filtered = React.useMemo(() => {
     return sourceScopedPosts
-      .filter((post) => watchlistMatch(post, watchlist))
+      .filter((post) => {
+        if (watchlist === "all") return true;
+
+        const byRule = watchlistMatch(post, watchlist);
+        const byAssignedHandle = activeWatchlistHandleSet.has(normalizeHandleForMatch(post.account.handle));
+        return byRule || byAssignedHandle;
+      })
       .filter((post) => (accountId === "all" ? true : post.accountId === accountId))
       .filter((post) => (category === "all" ? true : post.account.category === category))
       .filter((post) => inWindow(post.postedAt, timeWindow))
@@ -203,6 +253,7 @@ export function DashboardClient({ payload }: Props) {
     competitorsOnly,
     opportunitiesOnly,
     narrativeFilter,
+    activeWatchlistHandleSet,
   ]);
 
   const engageNow = React.useMemo(() => {
@@ -242,6 +293,56 @@ export function DashboardClient({ payload }: Props) {
   const handleGraphSelectAccount = React.useCallback((nextAccountId: string) => {
     setAccountId(nextAccountId);
   }, []);
+
+  const openWatchlistDialog = React.useCallback((nextWatchlistKey: WatchlistKey) => {
+    setWatchlistDialog({ open: true, watchlistKey: nextWatchlistKey });
+    setWatchlistDialogMessage(null);
+  }, []);
+
+  const closeWatchlistDialog = React.useCallback(() => {
+    setWatchlistDialog({ open: false, watchlistKey: null });
+    setWatchlistDialogMessage(null);
+  }, []);
+
+  const handleAddWatchlistAccount = React.useCallback(
+    (input: { displayName?: string; handle: string }) => {
+      const watchlistKey = watchlistDialog.watchlistKey;
+      if (!watchlistKey) return;
+
+      setWatchlistDialogMessage(null);
+
+      startWatchlistTransition(async () => {
+        const result = await addWatchlistAccountAction({
+          watchlistKey,
+          center: centerFocus,
+          sourcePlatform: sourceTab,
+          handle: input.handle,
+          displayName: input.displayName,
+        });
+
+        if (!result.ok || !result.assignment) {
+          setWatchlistDialogMessage({
+            kind: "error",
+            text: result.message,
+          });
+          return;
+        }
+
+        setWatchlistAssignments((current) => {
+          const exists = current.some((item) => item.id === result.assignment?.id);
+          if (exists) return current;
+          return [result.assignment!, ...current];
+        });
+
+        setWatchlistToast(result.message);
+        closeWatchlistDialog();
+      });
+    },
+    [watchlistDialog.watchlistKey, centerFocus, sourceTab, startWatchlistTransition, closeWatchlistDialog]
+  );
+
+  const dialogWatchlistLabel =
+    watchlists.find((item) => item.key === watchlistDialog.watchlistKey)?.label ?? "Watchlist";
 
   return (
     <main className="min-h-screen bg-background px-3 py-3 sm:px-4 lg:px-5">
@@ -345,25 +446,81 @@ export function DashboardClient({ payload }: Props) {
                 <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Watchlists</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 p-2 pt-0">
+                {watchlistToast ? (
+                  <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200">
+                    {watchlistToast}
+                  </div>
+                ) : null}
+
                 {watchlists.map((item) => {
-                  const count = sourceScopedPosts.filter((post) => watchlistMatch(post, item.key)).length;
+                  const tracked = watchlistAccountsByKey[item.key];
+                  const trackedHandleSet = new Set(tracked.map((entry) => normalizeHandleForMatch(entry.handle)));
+                  const count = sourceScopedPosts.filter((post) => {
+                    if (item.key === "all") return true;
+                    return (
+                      watchlistMatch(post, item.key) ||
+                      trackedHandleSet.has(normalizeHandleForMatch(post.account.handle))
+                    );
+                  }).length;
                   const active = item.key === watchlist;
+
                   return (
-                    <button
+                    <div
                       key={item.key}
-                      onClick={() => setWatchlist(item.key)}
-                      className={`w-full rounded border px-2 py-1.5 text-left text-xs transition ${
+                      className={`rounded border px-2 py-1.5 transition ${
                         active
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground"
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-border/60 bg-background/40"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{item.label}</span>
-                        <span>{count}</span>
+                      <div className="flex items-start justify-between gap-2">
+                        <button
+                          onClick={() => {
+                            setWatchlist(item.key);
+                            setWatchlistToast(null);
+                          }}
+                          className="flex-1 text-left"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className={`text-xs font-medium ${active ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                              {item.label}
+                            </span>
+                            <span className="text-xs text-muted-foreground">{count}</span>
+                          </div>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">{item.description}</p>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openWatchlistDialog(item.key);
+                          }}
+                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border/70 bg-background/60 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                          title={`Add account to ${item.label}`}
+                        >
+                          <Plus className="size-3" />
+                        </button>
                       </div>
-                      <p className="mt-0.5 text-[10px] opacity-80">{item.description}</p>
-                    </button>
+
+                      {tracked.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {tracked.slice(0, 4).map((entry) => (
+                            <span
+                              key={entry.id}
+                              className="inline-flex items-center rounded border border-border/70 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            >
+                              {entry.handle}
+                            </span>
+                          ))}
+                          {tracked.length > 4 ? (
+                            <span className="inline-flex items-center rounded border border-border/70 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              +{tracked.length - 4}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </CardContent>
@@ -757,6 +914,18 @@ export function DashboardClient({ payload }: Props) {
           </aside>
         </section>
       </div>
+
+      <AddWatchlistAccountDialog
+        open={watchlistDialog.open}
+        watchlistKey={watchlistDialog.watchlistKey}
+        watchlistLabel={dialogWatchlistLabel}
+        center={centerFocus}
+        sourcePlatform={sourceTab}
+        pending={watchlistPending}
+        message={watchlistDialogMessage}
+        onClose={closeWatchlistDialog}
+        onSubmit={handleAddWatchlistAccount}
+      />
     </main>
   );
 }

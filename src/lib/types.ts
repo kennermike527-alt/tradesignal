@@ -4,6 +4,7 @@ export type TrackedAccount = Pick<Account, "id" | "displayName" | "handle" | "ca
 
 export type IntelligenceCenter = "IOTA" | "TWIN";
 export type SourcePlatform = "X" | "LINKEDIN";
+export type WatchlistKey = "all" | "priority" | "competitors" | "founders" | "media" | "ecosystem";
 
 export type NormalizedSocialPost = {
   provider: SocialProvider;
@@ -67,6 +68,16 @@ export type IngestionRunPreview = {
   notes: string | null;
 };
 
+export type WatchlistAssignment = {
+  id: string;
+  watchlistKey: WatchlistKey;
+  center: IntelligenceCenter;
+  sourcePlatform: SourcePlatform;
+  handle: string;
+  displayName: string | null;
+  createdAt: Date;
+};
+
 export type TerminalSystemStatus = {
   mode: "LIVE" | "DEMO";
   dbCode: "CONNECTED" | "MISSING_DATABASE_URL" | "UNREACHABLE";
@@ -81,6 +92,7 @@ export type DashboardPayload = {
   posts: DashboardPost[];
   accounts: DashboardAccount[];
   categories: AccountCategory[];
+  watchlistAssignments: WatchlistAssignment[];
   stats: DashboardStats;
   ingestionRuns: IngestionRunPreview[];
   system: TerminalSystemStatus;

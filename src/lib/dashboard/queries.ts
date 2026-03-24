@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
 import { cadenceLabelForAccounts } from "@/lib/ingestion/budget-guard";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
+import { fromDbWatchlistKey } from "@/lib/watchlists";
 import type { DashboardPayload, DashboardPost, DashboardStats, IntelligenceCenter, SourcePlatform } from "@/lib/types";
 
 function pickCenter(postText: string, handle: string): IntelligenceCenter | null {
@@ -61,7 +62,7 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
   }
 
   try {
-    const [postsRaw, accounts, latestRun, ingestionRuns] = await Promise.all([
+    const [postsRaw, accounts, watchlistRows, latestRun, ingestionRuns] = await Promise.all([
       db.post.findMany({
         orderBy: { postedAt: "desc" },
         take: limit,
@@ -92,6 +93,18 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
           handle: true,
           category: true,
           tags: true,
+        },
+      }),
+      db.watchlistAccount.findMany({
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          watchlistKey: true,
+          center: true,
+          sourcePlatform: true,
+          handle: true,
+          displayName: true,
+          createdAt: true,
         },
       }),
       db.ingestionRun.findFirst({
@@ -139,6 +152,16 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       };
     });
 
+    const watchlistAssignments = watchlistRows.map((row) => ({
+      id: row.id,
+      watchlistKey: fromDbWatchlistKey(row.watchlistKey),
+      center: row.center,
+      sourcePlatform: row.sourcePlatform,
+      handle: row.handle,
+      displayName: row.displayName,
+      createdAt: row.createdAt,
+    }));
+
     const stats = buildStats(
       posts,
       accounts.length,
@@ -150,6 +173,7 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       posts,
       accounts,
       categories: Object.values(AccountCategory),
+      watchlistAssignments,
       stats,
       ingestionRuns,
       system: {

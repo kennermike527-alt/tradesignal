@@ -26,6 +26,25 @@ enum IngestionStatus {
   FAILED
 }
 
+enum IntelligenceCenter {
+  IOTA
+  TWIN
+}
+
+enum SourcePlatform {
+  X
+  LINKEDIN
+}
+
+enum WatchlistKey {
+  ALL
+  PRIORITY
+  COMPETITORS
+  FOUNDERS
+  MEDIA
+  ECOSYSTEM
+}
+
 model Account {
   id          String          @id @default(cuid())
   displayName String
@@ -34,13 +53,32 @@ model Account {
   category    AccountCategory
   tags        String[]        @default([])
   isActive    Boolean         @default(true)
-  posts       Post[]
-  createdAt   DateTime        @default(now())
+  posts            Post[]
+  watchlistEntries WatchlistAccount[]
+  createdAt        DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   @@unique([provider, handle])
   @@index([provider, isActive])
   @@index([category])
+}
+
+model WatchlistAccount {
+  id               String             @id @default(cuid())
+  watchlistKey     WatchlistKey
+  center           IntelligenceCenter
+  sourcePlatform   SourcePlatform
+  handle           String
+  handleNormalized String
+  displayName      String?
+  accountId        String?
+  account          Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@unique([watchlistKey, center, sourcePlatform, handleNormalized])
+  @@index([center, sourcePlatform, watchlistKey])
+  @@index([accountId])
 }
 
 model Post {
