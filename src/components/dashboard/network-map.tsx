@@ -267,7 +267,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
               <UserRound className="size-3" /> {network.nodes.length} nodes
             </span>
             <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/50 px-2 py-0.5">
-              <Link2 className="size-3" /> {network.edges.length} edges
+              <Link2 className="size-3" /> {network.edges.length} relationships
             </span>
             <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/50 px-2 py-0.5">
               <Orbit className="size-3" /> {clusterSignal} narrative links
@@ -390,7 +390,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
             </span>
           ))}
           <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
-            <Network className="size-2.5" /> edges: mentions + replies + shared narratives
+            <Network className="size-2.5" /> relationships: mentions + replies + shared narratives
           </span>
         </div>
       </CardContent>
