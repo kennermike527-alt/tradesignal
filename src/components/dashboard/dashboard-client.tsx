@@ -129,6 +129,14 @@ function postMatchesNarrativeTopic(post: DashboardPost, topic: NarrativeTopicSum
   return termHit || labelHit || handleHit;
 }
 
+function postMatchesKeyTopic(post: DashboardPost, topic: string) {
+  const normalized = topic.trim().toLowerCase();
+  if (!normalized) return false;
+
+  const text = `${post.content} ${post.summary?.summary ?? ""} ${post.account.tags.join(" ")}`.toLowerCase();
+  return text.includes(normalized);
+}
+
 function dbTone(code: DashboardPayload["system"]["dbCode"]) {
   if (code === "CONNECTED") return "text-emerald-300 border-emerald-600/40 bg-emerald-500/10";
   if (code === "MISSING_DATABASE_URL") return "text-amber-300 border-amber-600/40 bg-amber-500/10";
@@ -159,6 +167,7 @@ export function DashboardClient({ payload }: Props) {
   const [competitorsOnly, setCompetitorsOnly] = React.useState(false);
   const [opportunitiesOnly, setOpportunitiesOnly] = React.useState(false);
   const [narrativeFilter, setNarrativeFilter] = React.useState<string>("all");
+  const [selectedKeyTopics, setSelectedKeyTopics] = React.useState<string[]>([]);
   const [savedPostIds, setSavedPostIds] = React.useState<string[]>([]);
   const [assignedPostIds, setAssignedPostIds] = React.useState<string[]>([]);
   const [taggedPostIds, setTaggedPostIds] = React.useState<string[]>([]);
@@ -202,6 +211,19 @@ export function DashboardClient({ payload }: Props) {
     const ids = new Set(sourceScopedPosts.map((post) => post.accountId));
     return [...new Map(sourceScopedPosts.map((post) => [post.accountId, post.account])).values()].filter((acc) => ids.has(acc.id));
   }, [sourceScopedPosts]);
+
+  const visualizationPosts = React.useMemo(() => {
+    if (selectedKeyTopics.length === 0) return sourceScopedPosts;
+
+    return sourceScopedPosts.filter((post) =>
+      selectedKeyTopics.some((topic) => postMatchesKeyTopic(post, topic))
+    );
+  }, [sourceScopedPosts, selectedKeyTopics]);
+
+  const visualizationAccounts = React.useMemo(() => {
+    const ids = new Set(visualizationPosts.map((post) => post.accountId));
+    return sourceScopedAccounts.filter((account) => ids.has(account.id));
+  }, [visualizationPosts, sourceScopedAccounts]);
 
   const contextWatchlistAssignments = React.useMemo(() => {
     return watchlistAssignments.filter(
@@ -314,6 +336,12 @@ export function DashboardClient({ payload }: Props) {
     [contextSummary]
   );
 
+  React.useEffect(() => {
+    setSelectedKeyTopics((current) =>
+      current.filter((topic) => summaryKeyTopics.some((keyTopic) => keyTopic.toLowerCase() === topic.toLowerCase()))
+    );
+  }, [summaryKeyTopics]);
+
   const narrativeFocusOptions = React.useMemo(() => {
     return summaryTopics
       .map((topic) => ({
@@ -409,6 +437,7 @@ export function DashboardClient({ payload }: Props) {
     setCompetitorsOnly(false);
     setOpportunitiesOnly(false);
     setNarrativeFilter("all");
+    setSelectedKeyTopics([]);
   };
 
   const toggleItem = (value: string, setValue: React.Dispatch<React.SetStateAction<string[]>>) => {
@@ -853,8 +882,8 @@ export function DashboardClient({ payload }: Props) {
 
           <section className="space-y-2">
             <NetworkMap
-              posts={sourceScopedPosts}
-              accounts={sourceScopedAccounts}
+              posts={visualizationPosts}
+              accounts={visualizationAccounts}
               selectedAccountId={accountId}
               centerFocus={centerFocus}
               sourceTab={sourceTab}
@@ -1178,20 +1207,64 @@ export function DashboardClient({ payload }: Props) {
 
             <Card className="border-border/70 bg-card/70">
               <CardHeader className="pb-2">
-                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Key topics</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Key topics</CardTitle>
+                  {selectedKeyTopics.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedKeyTopics([])}
+                      className="rounded border border-border/70 bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      Clear ({selectedKeyTopics.length})
+                    </button>
+                  ) : null}
+                </div>
               </CardHeader>
-              <CardContent className="flex flex-wrap gap-1 p-2 pt-0">
+              <CardContent className="space-y-2 p-2 pt-0">
                 {summaryKeyTopics.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No high-signal key terms yet.</p>
                 ) : (
-                  summaryKeyTopics.slice(0, 14).map((topic) => (
-                    <span
-                      key={topic}
-                      className="inline-flex items-center rounded border border-border/70 bg-background/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    >
-                      {topic}
-                    </span>
-                  ))
+                  <>
+                    <div className="flex flex-wrap gap-1">
+                      {summaryKeyTopics.slice(0, 18).map((topic) => {
+                        const active = selectedKeyTopics.some(
+                          (selectedTopic) => selectedTopic.toLowerCase() === topic.toLowerCase()
+                        );
+
+                        return (
+                          <button
+                            key={topic}
+                            type="button"
+                            onClick={() =>
+                              setSelectedKeyTopics((current) => {
+                                const exists = current.some(
+                                  (selectedTopic) => selectedTopic.toLowerCase() === topic.toLowerCase()
+                                );
+                                if (exists) {
+                                  return current.filter(
+                                    (selectedTopic) => selectedTopic.toLowerCase() !== topic.toLowerCase()
+                                  );
+                                }
+                                return [...current, topic];
+                              })
+                            }
+                            className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] transition ${
+                              active
+                                ? "border-primary/40 bg-primary/15 text-foreground"
+                                : "border-border/70 bg-background/50 text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            {topic}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {selectedKeyTopics.length > 0
+                        ? `Visualization filtered by ${selectedKeyTopics.length} selected key topic(s).`
+                        : "Select one or more key topics to filter the constellation relationships."}
+                    </p>
+                  </>
                 )}
               </CardContent>
             </Card>
