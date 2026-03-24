@@ -133,6 +133,23 @@ Budget guard (recommended defaults for ~$350/month target):
 - `INGEST_EST_POSTS_PER_ACCOUNT_PER_RUN=10`
 - `INGEST_EST_USER_READS_PER_ACCOUNT_PER_RUN=0`
 
+### How the $ cap works
+
+Runtime estimator computes:
+
+- `estimatedCostPerRun = activeAccounts * ((postsPerAccount * postReadCost) + (userReadsPerAccount * userReadCost))`
+- `projectedMonthlyCost = estimatedCostPerRun * (30 * 24 * 60 / cadenceMinutes)`
+
+If `projectedMonthlyCost > INGEST_MONTHLY_BUDGET_USD`, ingestion is blocked with:
+
+- `BUDGET_GUARD_BLOCK`
+
+The response includes:
+
+- projected monthly cost
+- current cadence
+- minimum safe cadence required to stay under budget
+
 ---
 
 ## Database setup (robust flow)
@@ -193,6 +210,13 @@ Manual/API ingestion returns controlled messages/codes:
 - `BUDGET_GUARD_BLOCK`
 
 When `BUDGET_GUARD_BLOCK` triggers, ingestion is blocked until cadence/scope is adjusted to stay under budget.
+
+Implementation references:
+
+- `src/lib/ingestion/budget-guard.ts` (budget math + minimum cadence)
+- `src/lib/ingestion/ingest-service.ts` (pre-run blocker + run metadata)
+- `src/app/actions.ts` (manual action message)
+- `src/app/api/ingest/route.ts` (API response code/message)
 
 No raw Prisma stack traces are surfaced in the main UI.
 
