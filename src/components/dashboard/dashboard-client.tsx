@@ -100,7 +100,11 @@ export function DashboardClient({ payload }: Props) {
   const { posts, categories, ingestionRuns, system } = payload;
 
   const [centerFocus, setCenterFocus] = React.useState<IntelligenceCenter>("IOTA");
-  const [sourceTab, setSourceTab] = React.useState<SourcePlatform>("X");
+  const [sourceByCenter, setSourceByCenter] = React.useState<Record<IntelligenceCenter, SourcePlatform>>({
+    IOTA: "X",
+    TWIN: "X",
+  });
+  const sourceTab = sourceByCenter[centerFocus];
 
   const [watchlist, setWatchlist] = React.useState<WatchlistKey>("all");
   const [accountId, setAccountId] = React.useState<string>("all");
@@ -292,7 +296,7 @@ export function DashboardClient({ payload }: Props) {
                   <button
                     key={source}
                     onClick={() => {
-                      setSourceTab(source);
+                      setSourceByCenter((current) => ({ ...current, [centerFocus]: source }));
                       setAccountId("all");
                     }}
                     className={`rounded px-2 py-1 ${

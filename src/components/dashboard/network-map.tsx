@@ -32,8 +32,7 @@ type HoverState = {
   recentPostCount: number;
 };
 
-const HUB_IOTA = "__hub_iota__";
-const HUB_TWIN = "__hub_twin__";
+const HUB_ID = "__center_hub__";
 
 const CATEGORY_COLORS: Record<AccountCategory, string> = {
   ECOSYSTEM: "#74a3ff",
@@ -51,6 +50,10 @@ const CATEGORY_ORDER: AccountCategory[] = [
   AccountCategory.INFLUENCER,
 ];
 
+function hubColor(centerFocus: IntelligenceCenter) {
+  return centerFocus === "IOTA" ? "#52a7ff" : "#f5b84d";
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -66,8 +69,7 @@ function computePresetPositions(
   maxInfluence: number
 ) {
   const positions: Record<string, { x: number; y: number }> = {
-    [HUB_IOTA]: { x: -48, y: 6 },
-    [HUB_TWIN]: { x: 48, y: 6 },
+    [HUB_ID]: { x: 0, y: 0 },
   };
 
   const groups = new Map<AccountCategory, Array<{ id: string; influenceScore: number }>>();
@@ -88,7 +90,7 @@ function computePresetPositions(
       const t = group.length === 1 ? 0 : index / (group.length - 1);
       const angle = centerAngle - spread / 2 + t * spread;
       const normalized = node.influenceScore / maxInfluence;
-      const radius = 230 + (1 - normalized) * 125 + (index % 3) * 10;
+      const radius = 235 + (1 - normalized) * 120 + (index % 3) * 10;
 
       positions[node.id] = {
         x: Math.cos(angle) * radius,
@@ -149,34 +151,19 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
       };
     });
 
-    const iotaHub = {
+    const hubNode = {
       data: {
-        id: HUB_IOTA,
-        label: "IOTA",
+        id: HUB_ID,
+        label: centerFocus,
         handle: "center",
         category: AccountCategory.ECOSYSTEM,
-        postCount: posts.filter((post) => post.center === "IOTA").length,
+        postCount: posts.length,
         recentPostCount,
         influence: Math.max(100, Math.round(maxInfluence * 0.35)),
-        color: "#52a7ff",
-        size: centerFocus === "IOTA" ? 90 : 78,
+        color: hubColor(centerFocus),
+        size: 90,
       },
-      classes: centerFocus === "IOTA" ? "hub hub-active" : "hub",
-    };
-
-    const twinHub = {
-      data: {
-        id: HUB_TWIN,
-        label: "TWIN",
-        handle: "center",
-        category: AccountCategory.ECOSYSTEM,
-        postCount: posts.filter((post) => post.center === "TWIN").length,
-        recentPostCount,
-        influence: Math.max(100, Math.round(maxInfluence * 0.32)),
-        color: "#f5b84d",
-        size: centerFocus === "TWIN" ? 90 : 78,
-      },
-      classes: centerFocus === "TWIN" ? "hub hub-active" : "hub",
+      classes: "hub",
     };
 
     const edgeEls = network.edges.map((edge) => {
@@ -193,44 +180,19 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
       };
     });
 
-    const hubEdges = network.nodes.flatMap((node) => [
-      {
-        data: {
-          id: `hub-iota-${node.id}`,
-          source: HUB_IOTA,
-          target: node.id,
-          weight: node.id === selectedAccountId ? 1.1 : 0.55,
-          narrativeCount: 0,
-          color: "#315579",
-        },
-        classes: "hub-edge",
-      },
-      {
-        data: {
-          id: `hub-twin-${node.id}`,
-          source: HUB_TWIN,
-          target: node.id,
-          weight: node.id === selectedAccountId ? 1.1 : 0.55,
-          narrativeCount: 0,
-          color: "#5a4a35",
-        },
-        classes: "hub-edge",
-      },
-    ]);
-
-    const bridge = {
+    const hubEdges = network.nodes.map((node) => ({
       data: {
-        id: "hub-bridge",
-        source: HUB_IOTA,
-        target: HUB_TWIN,
-        weight: 3,
+        id: `hub-${node.id}`,
+        source: HUB_ID,
+        target: node.id,
+        weight: node.id === selectedAccountId ? 1.1 : 0.58,
         narrativeCount: 0,
-        color: "#8fa3c5",
+        color: centerFocus === "IOTA" ? "#315579" : "#5a4a35",
       },
-      classes: "hub-bridge",
-    };
+      classes: "hub-edge",
+    }));
 
-    return [iotaHub, twinHub, ...nodeEls, bridge, ...hubEdges, ...edgeEls];
+    return [hubNode, ...nodeEls, ...hubEdges, ...edgeEls];
   }, [network, maxInfluence, selectedAccountId, posts, recentPostCount, centerFocus]);
 
   const setCy = React.useCallback(
@@ -244,15 +206,14 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
 
       cy.on("mouseover", "node", (event) => {
         const id = event.target.id();
-        if (id === HUB_IOTA || id === HUB_TWIN) {
-          const centerName: IntelligenceCenter = id === HUB_IOTA ? "IOTA" : "TWIN";
+        if (id === HUB_ID) {
           setHovered({
             id,
-            label: centerName,
+            label: centerFocus,
             handle: "center",
             category: AccountCategory.ECOSYSTEM,
             influence: Math.round(network.nodes.reduce((sum, n) => sum + n.influenceScore, 0)),
-            postCount: posts.filter((post) => post.center === centerName).length,
+            postCount: posts.length,
             recentPostCount,
           });
           return;
@@ -278,7 +239,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
 
       cy.on("tap", "node", (event) => {
         const id = event.target.id();
-        if (id === HUB_IOTA || id === HUB_TWIN) {
+        if (id === HUB_ID) {
           onSelectAccount("all");
           return;
         }
@@ -289,7 +250,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
         if (event.target === cy) setHovered(null);
       });
     },
-    [nodesById, onSelectAccount, network.nodes, posts, recentPostCount]
+    [nodesById, onSelectAccount, network.nodes, posts, recentPostCount, centerFocus]
   );
 
   const clusterSignal = network.edges.filter((edge) => edge.sharedNarratives.length > 0).length;
@@ -368,11 +329,6 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
                   "text-margin-y": 12,
                   "shadow-opacity": 0.8,
                   "shadow-blur": 24,
-                },
-              },
-              {
-                selector: "node.hub-active",
-                style: {
                   "border-color": "#ffffff",
                 },
               },
@@ -400,21 +356,13 @@ export function NetworkMap({ posts, accounts, selectedAccountId, centerFocus, so
                   "line-style": "dotted",
                 },
               },
-              {
-                selector: "edge.hub-bridge",
-                style: {
-                  width: 2,
-                  opacity: 0.5,
-                  "line-style": "solid",
-                },
-              },
             ]}
           />
         </div>
 
         <div className="grid gap-2 lg:grid-cols-[1fr_auto]">
           <div className="rounded border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground">
-            Hover a node for details. Click account nodes to filter feed. IOTA + TWIN hubs stay centered.
+            Separate constellation per center. Hover nodes for details. Click account nodes to filter feed.
           </div>
           <button
             onClick={() => onSelectAccount("all")}
