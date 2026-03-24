@@ -336,7 +336,7 @@ export function DashboardClient({ payload }: Props) {
 
           <section className="space-y-2">
             <NetworkMap
-              posts={filtered}
+              posts={posts}
               accounts={accounts}
               selectedAccountId={accountId}
               onSelectAccount={handleGraphSelectAccount}

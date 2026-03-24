@@ -4,7 +4,7 @@ import * as React from "react";
 import dynamic from "next/dynamic";
 import type cytoscape from "cytoscape";
 import { AccountCategory } from "@prisma/client";
-import { Activity, ArrowRightLeft, Compass, Link2, UserRound } from "lucide-react";
+import { Activity, ArrowRightLeft, Link2, Network, Orbit, UserRound } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DashboardAccount, DashboardPost } from "@/lib/types";
 import { buildSignalNetwork } from "@/lib/dashboard/network";
@@ -30,16 +30,70 @@ type HoverState = {
   recentPostCount: number;
 };
 
+const HUB_ID = "__signalforge_hub__";
+
 const CATEGORY_COLORS: Record<AccountCategory, string> = {
-  ECOSYSTEM: "#7c8cff",
-  COMPETITOR: "#ff6b7a",
-  MEDIA: "#7be3ba",
-  INFLUENCER: "#f8bf69",
-  FOUNDER: "#d596ff",
+  ECOSYSTEM: "#74a3ff",
+  COMPETITOR: "#ff6c83",
+  MEDIA: "#63d9b0",
+  INFLUENCER: "#f3bc63",
+  FOUNDER: "#cb8dff",
 };
+
+const CATEGORY_ORDER: AccountCategory[] = [
+  AccountCategory.ECOSYSTEM,
+  AccountCategory.COMPETITOR,
+  AccountCategory.MEDIA,
+  AccountCategory.FOUNDER,
+  AccountCategory.INFLUENCER,
+];
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function categoryAngle(category: AccountCategory) {
+  const index = Math.max(0, CATEGORY_ORDER.indexOf(category));
+  const sector = (Math.PI * 2) / CATEGORY_ORDER.length;
+  return -Math.PI / 2 + index * sector;
+}
+
+function computePresetPositions(
+  nodes: Array<{ id: string; category: AccountCategory; influenceScore: number }>,
+  maxInfluence: number
+) {
+  const positions: Record<string, { x: number; y: number }> = {
+    [HUB_ID]: { x: 0, y: 0 },
+  };
+
+  const groups = new Map<AccountCategory, Array<{ id: string; influenceScore: number }>>();
+  for (const category of CATEGORY_ORDER) groups.set(category, []);
+
+  for (const node of nodes) {
+    groups.get(node.category)?.push({ id: node.id, influenceScore: node.influenceScore });
+  }
+
+  for (const category of CATEGORY_ORDER) {
+    const group = (groups.get(category) ?? []).sort((a, b) => b.influenceScore - a.influenceScore);
+    if (group.length === 0) continue;
+
+    const centerAngle = categoryAngle(category);
+    const spread = Math.max(0.45, Math.min(1.2, group.length * 0.08));
+
+    group.forEach((node, index) => {
+      const t = group.length === 1 ? 0 : index / (group.length - 1);
+      const angle = centerAngle - spread / 2 + t * spread;
+      const normalized = node.influenceScore / maxInfluence;
+      const radius = 220 + (1 - normalized) * 120 + (index % 3) * 10;
+
+      positions[node.id] = {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
+      };
+    });
+  }
+
+  return positions;
 }
 
 export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount }: Props) {
@@ -52,14 +106,28 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
     return Math.max(1, max);
   }, [network.nodes]);
 
+  const referenceNow = React.useMemo(
+    () => posts.reduce((maxTs, post) => Math.max(maxTs, post.postedAt.getTime()), 0),
+    [posts]
+  );
+  const recentCutoff = referenceNow - 2 * 60 * 60 * 1000;
+  const recentPostCount = React.useMemo(
+    () => posts.filter((post) => post.postedAt.getTime() >= recentCutoff).length,
+    [posts, recentCutoff]
+  );
+
   const nodesById = React.useMemo(() => {
     return new Map(network.nodes.map((node) => [node.id, node]));
   }, [network.nodes]);
 
+  const positions = React.useMemo(() => {
+    return computePresetPositions(network.nodes, maxInfluence);
+  }, [network.nodes, maxInfluence]);
+
   const elements = React.useMemo(() => {
     const nodeEls = network.nodes.map((node) => {
       const normalized = node.influenceScore / maxInfluence;
-      const size = clamp(22 + normalized * 36, 22, 64);
+      const size = clamp(22 + normalized * 34, 22, 60);
 
       return {
         data: {
@@ -72,36 +140,59 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
           influence: Math.round(node.influenceScore),
           color: CATEGORY_COLORS[node.category],
           size,
-          selected: node.id === selectedAccountId ? 1 : 0,
         },
+        classes: node.id === selectedAccountId ? "selected" : "",
       };
     });
 
+    const hubNode = {
+      data: {
+        id: HUB_ID,
+        label: "SignalForge",
+        handle: "core",
+        category: AccountCategory.ECOSYSTEM,
+        postCount: posts.length,
+        recentPostCount,
+        influence: Math.max(100, Math.round(maxInfluence * 0.35)),
+        color: "#f5b84d",
+        size: 86,
+      },
+      classes: "hub",
+    };
+
     const edgeEls = network.edges.map((edge) => {
       const shared = edge.sharedNarratives.length;
-      const labelParts: string[] = [];
-      if (edge.mentionCount > 0) labelParts.push(`mentions ${edge.mentionCount}`);
-      if (edge.replyCount > 0) labelParts.push(`replies ${edge.replyCount}`);
-      if (shared > 0) labelParts.push(`shared ${shared}`);
-
       return {
         data: {
           id: edge.id,
           source: edge.source,
           target: edge.target,
           weight: edge.weight,
-          label: labelParts.join(" · "),
-          color: shared > 0 ? "#8f7bff" : "#55607a",
+          narrativeCount: shared,
+          color: shared > 0 ? "#8e82ff" : "#4d6f92",
         },
       };
     });
 
-    return [...nodeEls, ...edgeEls];
-  }, [network, maxInfluence, selectedAccountId]);
+    const hubEdges = network.nodes.map((node) => ({
+      data: {
+        id: `hub-${node.id}`,
+        source: HUB_ID,
+        target: node.id,
+        weight: 0.6,
+        narrativeCount: 0,
+        color: "#314867",
+      },
+      classes: "hub-edge",
+    }));
+
+    return [hubNode, ...nodeEls, ...hubEdges, ...edgeEls];
+  }, [network, maxInfluence, selectedAccountId, posts, recentPostCount]);
 
   const setCy = React.useCallback(
     (instance: unknown) => {
       const cy = instance as cytoscape.Core;
+
       cy.off("mouseover", "node");
       cy.off("mouseout", "node");
       cy.off("tap", "node");
@@ -109,8 +200,22 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
 
       cy.on("mouseover", "node", (event) => {
         const id = event.target.id();
+        if (id === HUB_ID) {
+          setHovered({
+            id,
+            label: "SignalForge",
+            handle: "core",
+            category: AccountCategory.ECOSYSTEM,
+            influence: Math.round(network.nodes.reduce((sum, n) => sum + n.influenceScore, 0)),
+            postCount: posts.length,
+            recentPostCount,
+          });
+          return;
+        }
+
         const node = nodesById.get(id);
         if (!node) return;
+
         setHovered({
           id: node.id,
           label: node.label,
@@ -127,16 +232,19 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
       });
 
       cy.on("tap", "node", (event) => {
-        onSelectAccount(event.target.id());
+        const id = event.target.id();
+        if (id === HUB_ID) {
+          onSelectAccount("all");
+          return;
+        }
+        onSelectAccount(id);
       });
 
       cy.on("tap", (event) => {
-        if (event.target === cy) {
-          setHovered(null);
-        }
+        if (event.target === cy) setHovered(null);
       });
     },
-    [nodesById, onSelectAccount]
+    [nodesById, onSelectAccount, network.nodes, posts, recentPostCount]
   );
 
   const clusterSignal = network.edges.filter((edge) => edge.sharedNarratives.length > 0).length;
@@ -145,7 +253,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
     <Card className="border-border/70 bg-card/70">
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Account interaction network</CardTitle>
+          <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Account interaction constellation</CardTitle>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/50 px-2 py-0.5">
               <UserRound className="size-3" /> {network.nodes.length} nodes
@@ -154,64 +262,90 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
               <Link2 className="size-3" /> {network.edges.length} edges
             </span>
             <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/50 px-2 py-0.5">
-              <Compass className="size-3" /> {clusterSignal} cluster links
+              <Orbit className="size-3" /> {clusterSignal} narrative links
             </span>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-2 p-2 pt-0">
-        <div className="h-[330px] overflow-hidden rounded border border-border/70 bg-background/60">
+        <div
+          className="h-[360px] overflow-hidden rounded border border-border/70"
+          style={{
+            background:
+              "radial-gradient(circle at center, rgba(23,35,61,0.95) 0%, rgba(7,13,28,0.98) 65%), radial-gradient(circle at 10% 10%, rgba(121,88,255,0.16), transparent 35%)",
+          }}
+        >
           <CytoscapeComponent
             elements={elements}
             style={{ width: "100%", height: "100%" }}
             cy={setCy}
-            wheelSensitivity={0.18}
-            minZoom={0.35}
-            maxZoom={2.4}
+            wheelSensitivity={0.16}
+            minZoom={0.5}
+            maxZoom={2.2}
             layout={{
-              name: "cose",
-              animate: false,
-              padding: 30,
-              nodeRepulsion: 7600,
-              idealEdgeLength: 100,
-              edgeElasticity: 180,
-              gravity: 0.25,
-              nestingFactor: 0.55,
+              name: "preset",
+              positions,
               fit: true,
+              padding: 20,
             }}
             stylesheet={[
               {
                 selector: "node",
                 style: {
                   "background-color": "data(color)",
-                  label: "data(handle)",
                   width: "data(size)",
                   height: "data(size)",
-                  color: "#cdd5f1",
-                  "font-size": 9,
+                  label: "data(label)",
+                  "text-max-width": 72,
+                  "text-wrap": "wrap",
+                  color: "#dbe4ff",
+                  "font-size": 8,
+                  "font-weight": 600,
                   "text-valign": "bottom",
                   "text-halign": "center",
-                  "text-margin-y": 7,
-                  "text-background-opacity": 0,
-                  "border-width": "mapData(selected, 0, 1, 1, 3)",
-                  "border-color": "#cad2ff",
+                  "text-margin-y": 8,
+                  "border-width": 1.5,
+                  "border-color": "#bfd0ff",
+                  "shadow-color": "data(color)",
+                  "shadow-opacity": 0.45,
+                  "shadow-blur": 15,
+                },
+              },
+              {
+                selector: "node.hub",
+                style: {
+                  "background-color": "#0a0d18",
+                  "border-width": 3,
+                  "border-color": "#f5b84d",
+                  "font-size": 10,
+                  "text-margin-y": 12,
+                  "shadow-color": "#f5b84d",
+                  "shadow-opacity": 0.7,
+                  "shadow-blur": 22,
+                },
+              },
+              {
+                selector: "node.selected",
+                style: {
+                  "border-width": 3,
+                  "border-color": "#ffffff",
                 },
               },
               {
                 selector: "edge",
                 style: {
-                  width: "mapData(weight, 1, 22, 1, 6)",
+                  width: "mapData(weight, 1, 24, 1, 4.5)",
                   "line-color": "data(color)",
-                  opacity: 0.6,
+                  opacity: 0.52,
                   "curve-style": "bezier",
-                  "target-arrow-shape": "none",
                 },
               },
               {
-                selector: "node:hover",
+                selector: "edge.hub-edge",
                 style: {
-                  "border-width": 3,
-                  "border-color": "#ffffff",
+                  width: 1,
+                  opacity: 0.24,
+                  "line-style": "dotted",
                 },
               },
             ]}
@@ -220,7 +354,7 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
 
         <div className="grid gap-2 lg:grid-cols-[1fr_auto]">
           <div className="rounded border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground">
-            Hover a node for context. Click a node to filter the feed by that account.
+            Hover any node for context. Click a node to filter the feed by that account.
           </div>
           <button
             onClick={() => onSelectAccount("all")}
@@ -247,6 +381,9 @@ export function NetworkMap({ posts, accounts, selectedAccountId, onSelectAccount
               <Activity className="size-2.5" style={{ color }} /> {category.toLowerCase()}
             </span>
           ))}
+          <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/40 px-2 py-0.5">
+            <Network className="size-2.5" /> edges: mentions + replies + shared narratives
+          </span>
         </div>
       </CardContent>
     </Card>
