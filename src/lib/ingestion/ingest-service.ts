@@ -4,6 +4,7 @@ import { estimateBudgetForAccounts, getBudgetPolicy } from "@/lib/ingestion/budg
 import { getProvider } from "@/lib/providers";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
 import { generatePostSummary } from "@/lib/summary/summary-service";
+import { syncAccountsFromWatchlistCsv } from "@/lib/watchlist/csv-sync";
 import type { IngestionOutcome, NormalizedSocialPost, TrackedAccount } from "@/lib/types";
 
 type IngestOptions = {
@@ -68,6 +69,12 @@ export async function ingestLatestPosts(options: IngestOptions = {}): Promise<In
   }
 
   let accounts: TrackedAccount[] = [];
+
+  try {
+    await syncAccountsFromWatchlistCsv({ provider });
+  } catch {
+    // Non-fatal: ingestion can still proceed with existing DB accounts.
+  }
 
   try {
     accounts = await db.account.findMany({

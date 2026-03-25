@@ -1,4 +1,4 @@
-import { Actionability, PostTone, PostType, Prisma } from "@prisma/client";
+import { Actionability, InterestKind, PostTone, PostType, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { BASELINE_TERMS } from "@/lib/context/context-resolver";
 import { getProviderCapabilities } from "@/lib/providers/capabilities";
@@ -7,7 +7,6 @@ import type {
   AdjacentInterestView,
   DashboardIntelligence,
   DashboardPost,
-  DashboardStats,
   EngagerView,
   TrackedOverview,
 } from "@/lib/types";
@@ -270,7 +269,7 @@ function inferAdjacentInterestsFromEngagers(
       confidence: Math.min(0.99, agg.score / Math.max(1, agg.count)),
       representativeKeywords: [...agg.keywords].slice(0, 6),
       representativeHandles: [...agg.handles].slice(0, 6),
-      interestKind: agg.nonTradeHits >= agg.tradeRelatedHits ? "ADJACENT_NON_TRADE" : "TRADE_RELATED",
+      interestKind: (agg.nonTradeHits >= agg.tradeRelatedHits ? "ADJACENT_NON_TRADE" : "TRADE_RELATED") as InterestKind,
     }))
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 12);

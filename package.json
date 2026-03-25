@@ -14,6 +14,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:status": "tsx src/scripts/db-status.ts",
     "db:setup": "tsx src/scripts/db-setup.ts",
+    "watchlist:sync": "tsx src/scripts/sync-watchlist.ts",
     "ingest:once": "tsx src/scripts/run-ingest.ts"
   },
   "dependencies": {

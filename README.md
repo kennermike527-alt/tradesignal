@@ -127,6 +127,7 @@ Optional:
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
 - `INGESTION_SECRET`
+- `TRADESIGNAL_WATCHLIST_CSV_PATH` (defaults to `../mission-control/jobs/social-watchlist.tradesignal.csv`)
 - `CONTEXT_SUMMARY_PROVIDER` (`openai` | `heuristic`)
 - `CONTEXT_SUMMARY_MODEL`
 - `CONTEXT_SUMMARY_REFRESH_MINUTES`
@@ -182,7 +183,15 @@ This runs:
 2. `prisma migrate deploy`
 3. `prisma db seed`
 
-### 3) Start app
+### 3) Sync tracked accounts from mission-control watchlist (optional but recommended)
+
+```bash
+npm run watchlist:sync
+```
+
+This imports/activates tracked accounts from the merged mission-control list (`x + linkedin`) before ingestion.
+
+### 4) Start app
 
 ```bash
 npm run dev
