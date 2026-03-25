@@ -61,7 +61,7 @@ const watchlists: Array<{ key: WatchlistKey; label: string; description: string 
   { key: "ecosystem", label: "Ecosystem ops", description: "Partnership + launch chatter" },
 ];
 
-const centers: IntelligenceCenter[] = ["IOTA", "TWIN"];
+const DEFAULT_CENTER: IntelligenceCenter = "IOTA";
 const sources: SourcePlatform[] = ["X", "LINKEDIN"];
 const numberFmt = new Intl.NumberFormat();
 const X_SESSION_STORAGE_KEY = "tradesignal.x.session.v1";
@@ -195,12 +195,8 @@ export function DashboardClient({ payload }: Props) {
 
   const [watchlistAssignments, setWatchlistAssignments] = React.useState(payload.watchlistAssignments);
 
-  const [centerFocus, setCenterFocus] = React.useState<IntelligenceCenter>("IOTA");
-  const [sourceByCenter, setSourceByCenter] = React.useState<Record<IntelligenceCenter, SourcePlatform>>({
-    IOTA: "X",
-    TWIN: "X",
-  });
-  const sourceTab = sourceByCenter[centerFocus];
+  const centerFocus: IntelligenceCenter = DEFAULT_CENTER;
+  const [sourceTab, setSourceTab] = React.useState<SourcePlatform>("X");
 
   const summaryCacheRef = React.useRef<Record<string, ContextNarrativeSummary>>({});
 
@@ -261,11 +257,9 @@ export function DashboardClient({ payload }: Props) {
   const actionableSignals = intelligence.actionableSignals;
   const providerCapabilities = intelligence.providerCapabilities;
 
-  const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
-
   const sourceScopedPosts = React.useMemo(
-    () => centerScopedPosts.filter((post) => post.sourcePlatform === sourceTab),
-    [centerScopedPosts, sourceTab]
+    () => posts.filter((post) => post.sourcePlatform === sourceTab),
+    [posts, sourceTab]
   );
 
   const sourceScopedAccounts = React.useMemo(() => {
@@ -311,10 +305,8 @@ export function DashboardClient({ payload }: Props) {
   }, [visualizationPosts, sourceScopedAccounts]);
 
   const contextWatchlistAssignments = React.useMemo(() => {
-    return watchlistAssignments.filter(
-      (item) => item.center === centerFocus && item.sourcePlatform === sourceTab
-    );
-  }, [watchlistAssignments, centerFocus, sourceTab]);
+    return watchlistAssignments.filter((item) => item.sourcePlatform === sourceTab);
+  }, [watchlistAssignments, sourceTab]);
 
   const watchlistAccountsByKey = React.useMemo(() => {
     const map: Record<WatchlistKey, Array<(typeof contextWatchlistAssignments)[number]>> = {
@@ -790,7 +782,7 @@ export function DashboardClient({ payload }: Props) {
                 <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
                   <Radar className="size-3.5" /> tradesignal // signalforge terminal
                 </p>
-                <h1 className="text-lg font-semibold leading-tight sm:text-xl">{centerFocus} intelligence command center</h1>
+                <h1 className="text-lg font-semibold leading-tight sm:text-xl">Trade intelligence command center</h1>
               </div>
               <div className="flex items-center gap-2">
                 {sourceTab === "X" ? (
@@ -835,21 +827,8 @@ export function DashboardClient({ payload }: Props) {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <div className="inline-flex rounded border border-border/70 bg-background/50 p-0.5 text-xs">
-                {centers.map((center) => (
-                  <button
-                    key={center}
-                    onClick={() => {
-                      setCenterFocus(center);
-                      setAccountId("all");
-                    }}
-                    className={`rounded px-2 py-1 ${
-                      centerFocus === center ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {center} dashboard
-                  </button>
-                ))}
+              <div className="inline-flex rounded border border-border/70 bg-background/50 px-2 py-1 text-xs text-muted-foreground">
+                Trade-account scope
               </div>
 
               <div className="inline-flex rounded border border-border/70 bg-background/50 p-0.5 text-xs">
@@ -857,7 +836,7 @@ export function DashboardClient({ payload }: Props) {
                   <button
                     key={source}
                     onClick={() => {
-                      setSourceByCenter((current) => ({ ...current, [centerFocus]: source }));
+                      setSourceTab(source);
                       setAccountId("all");
                     }}
                     className={`rounded px-2 py-1 ${
@@ -1320,7 +1299,7 @@ export function DashboardClient({ payload }: Props) {
               {sourceScopedPosts.length === 0 ? (
                 <Card className="border-border/70 bg-card/70">
                   <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                    No {sourceTab === "X" ? "X" : "LinkedIn"} stream data yet for {centerFocus}. Ingest or switch tab.
+                    No {sourceTab === "X" ? "X" : "LinkedIn"} stream data yet. Ingest or switch tab.
                   </CardContent>
                 </Card>
               ) : filtered.length === 0 ? (
