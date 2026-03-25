@@ -334,3 +334,34 @@ Optional one-shot ingest:
 ```bash
 npm run ingest:once
 ```
+
+---
+
+## Account-led intelligence pivot (current)
+
+TradeSignal is now account-led by design:
+
+- primary object: tracked accounts
+- first question: what tracked accounts are discussing
+- second question: who engages with those tracked accounts and what else they care about
+
+### New/extended data model
+
+- `TrackedAccount`
+- `PostClassification`
+- `EngagingAccount`
+- `EngagementEvent`
+- `EngagerInterestProfile`
+- `InterestCluster`
+- `TopicSummary`
+- `ActionableSignal`
+
+### Provider capability honesty
+
+The dashboard includes provider capability notes (X vs LinkedIn) and does not claim unsupported engagement types as complete.
+
+### Current limitations
+
+- Engagement event ingestion depth depends on provider endpoint access.
+- Adjacent-interest inference is strongest when engager activity is available; otherwise the panel degrades gracefully.
+- Topic clustering is currently a practical baseline + LLM summary layer, not full semantic embedding clustering yet.

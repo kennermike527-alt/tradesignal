@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { db } from "@/lib/db";
-import { BASELINE_TERMS, detectSourcePlatformFromUrl, pickCenterFromText } from "@/lib/context/context-resolver";
+import { classifyPostForIntelligence } from "@/lib/intelligence/account-led-intelligence-service";
 import { compactWhitespace, truncate } from "@/lib/utils";
 import type {
   ContextNarrativeSummary,
@@ -18,19 +18,15 @@ type ContextSummaryOptions = {
   forceRefresh?: boolean;
 };
 
-type ClusterBucket = {
-  id: string;
+type TopicCluster = {
   label: string;
-  terms: Set<string>;
-  handles: Set<string>;
   posts: Array<{
-    content: string;
-    sourceUrl: string;
-    postedAt: Date;
     handle: string;
-    displayName: string;
+    content: string;
     summary: string | null;
+    postedAt: Date;
     engagement: number;
+    topics: string[];
   }>;
 };
 
@@ -39,193 +35,21 @@ type ModelOutput = {
   topics: NarrativeTopicSummary[];
 };
 
-type ProviderName = "openai" | "heuristic";
-
-const DEFAULT_SUMMARY_MODEL = process.env.CONTEXT_SUMMARY_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
-const SUMMARY_PROVIDER = (process.env.CONTEXT_SUMMARY_PROVIDER || "openai").toLowerCase() as ProviderName;
+const SUMMARY_PROVIDER = (process.env.CONTEXT_SUMMARY_PROVIDER || "openai").toLowerCase();
+const SUMMARY_MODEL = process.env.CONTEXT_SUMMARY_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
 const SUMMARY_REFRESH_MINUTES = Number(process.env.CONTEXT_SUMMARY_REFRESH_MINUTES || 90);
-const MAX_POSTS_FOR_SUMMARY = Number(process.env.CONTEXT_SUMMARY_MAX_POSTS || 300);
+const MAX_POSTS = Number(process.env.CONTEXT_SUMMARY_MAX_POSTS || 300);
 
-const CLUSTER_PATTERNS: Array<{ id: string; label: string; keywords: string[] }> = [
-  { id: "partnerships", label: "Partnerships & Integrations", keywords: ["partner", "integration", "alliance", "collaboration", "joint"] },
-  { id: "launches", label: "Launches & Product Execution", keywords: ["launch", "release", "ship", "roadmap", "beta", "feature", "deploy"] },
-  { id: "regulation", label: "Regulation & Policy", keywords: ["regulat", "policy", "compliance", "sanction", "tax", "framework", "law"] },
-  { id: "competition", label: "Competition & Positioning", keywords: ["competitor", "rival", "market share", "vs", "alternative"] },
-  { id: "market", label: "Market Sentiment & Liquidity", keywords: ["liquidity", "flow", "volatility", "sentiment", "demand", "risk"] },
-  { id: "infra", label: "Infrastructure & Standards", keywords: ["standard", "infrastructure", "interoperability", "protocol", "security", "performance"] },
-];
+let client: OpenAI | null = null;
 
-const STOPWORDS = new Set(
-  [
-    "the",
-    "and",
-    "for",
-    "with",
-    "that",
-    "this",
-    "from",
-    "have",
-    "has",
-    "into",
-    "about",
-    "your",
-    "their",
-    "our",
-    "just",
-    "will",
-    "been",
-    "they",
-    "them",
-    "were",
-    "what",
-    "when",
-    "where",
-    "while",
-    "more",
-    "most",
-    "some",
-    "many",
-    "only",
-    "over",
-    "under",
-    "within",
-    "across",
-    "post",
-    "posts",
-    "today",
-    "week",
-    "month",
-    "using",
-    "also",
-    "than",
-    "then",
-    "into",
-    "onto",
-    "very",
-    "new",
-    "update",
-    "updates",
-    "thread",
-    "link",
-    "linkedin",
-    "twitter",
-    "xcom",
-    "https",
-    "http",
-  ].concat([...BASELINE_TERMS])
-);
+const BASELINE = new Set(["iota", "twin", "iotafoundation", "twinfoundation"]);
 
-let openAiClient: OpenAI | null = null;
-
-function getOpenAiClient() {
-  if (!process.env.OPENAI_API_KEY) return null;
-  if (!openAiClient) {
-    openAiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return openAiClient;
+function normalizeHandle(handle: string) {
+  return handle.trim().replace(/^@+/, "").toLowerCase();
 }
 
-function toneFromText(text: string): ContextSummaryTone {
-  const lower = text.toLowerCase();
-  const positive = (lower.match(/gain|growth|improv|strong|opportun|momentum|adoption/g) || []).length;
-  const negative = (lower.match(/risk|declin|drop|delay|issue|concern|block|pressure/g) || []).length;
-
-  if (positive > 0 && negative > 0) return "mixed";
-  if (positive > negative) return "positive";
-  if (negative > positive) return "negative";
-  return "neutral";
-}
-
-function tokenize(value: string) {
-  return (value.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || []).filter((token) => !STOPWORDS.has(token));
-}
-
-function pickClusterLabel(text: string) {
-  let winner = CLUSTER_PATTERNS[0];
-  let bestScore = 0;
-
-  for (const pattern of CLUSTER_PATTERNS) {
-    const score = pattern.keywords.reduce((sum, keyword) => sum + (text.includes(keyword) ? 1 : 0), 0);
-    if (score > bestScore) {
-      bestScore = score;
-      winner = pattern;
-    }
-  }
-
-  if (bestScore === 0) {
-    return { id: "ops", label: "Operational Signal Drift" };
-  }
-
-  return { id: winner.id, label: winner.label };
-}
-
-function buildClusters(
-  posts: Array<{
-    content: string;
-    sourceUrl: string;
-    postedAt: Date;
-    account: { handle: string; displayName: string };
-    summary: { summary: string } | null;
-    likeCount: number;
-    replyCount: number;
-    repostCount: number;
-    quoteCount: number | null;
-  }>
-) {
-  const map = new Map<string, ClusterBucket>();
-
-  for (const post of posts) {
-    const text = `${post.content} ${post.summary?.summary ?? ""}`.toLowerCase();
-    const cluster = pickClusterLabel(text);
-
-    if (!map.has(cluster.id)) {
-      map.set(cluster.id, {
-        id: cluster.id,
-        label: cluster.label,
-        terms: new Set<string>(),
-        handles: new Set<string>(),
-        posts: [],
-      });
-    }
-
-    const bucket = map.get(cluster.id)!;
-    tokenize(text).forEach((token) => bucket.terms.add(token));
-    bucket.handles.add(post.account.handle);
-
-    bucket.posts.push({
-      content: post.content,
-      sourceUrl: post.sourceUrl,
-      postedAt: post.postedAt,
-      handle: post.account.handle,
-      displayName: post.account.displayName,
-      summary: post.summary?.summary ?? null,
-      engagement: post.likeCount + post.replyCount * 2 + post.repostCount * 3 + (post.quoteCount ?? 0) * 2,
-    });
-  }
-
-  return [...map.values()]
-    .map((bucket) => ({
-      ...bucket,
-      posts: bucket.posts.sort((a, b) => b.engagement - a.engagement),
-    }))
-    .sort((a, b) => b.posts.length - a.posts.length)
-    .slice(0, 6);
-}
-
-function topTermsFromClusters(clusters: ClusterBucket[], limit = 10) {
-  const freq = new Map<string, number>();
-
-  for (const cluster of clusters) {
-    for (const term of cluster.terms) {
-      freq.set(term, (freq.get(term) || 0) + 1);
-    }
-  }
-
-  return [...freq.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([term]) => term)
-    .filter((term) => !BASELINE_TERMS.has(term))
-    .slice(0, limit);
+function detectSourceFromUrl(url: string): SourcePlatform {
+  return url.toLowerCase().includes("linkedin.com") ? "LINKEDIN" : "X";
 }
 
 function ensureArray(value: unknown, max = 8) {
@@ -236,245 +60,198 @@ function ensureArray(value: unknown, max = 8) {
     .slice(0, max);
 }
 
-function ensureUnknownArray(value: unknown, max = 8) {
-  if (!Array.isArray(value)) return [] as unknown[];
-  return value.slice(0, max);
+function toneFromText(text: string): ContextSummaryTone {
+  const lower = text.toLowerCase();
+  const pos = (lower.match(/gain|strong|momentum|upside|improv/g) || []).length;
+  const neg = (lower.match(/risk|drop|pressure|downside|delay/g) || []).length;
+  if (pos > 0 && neg > 0) return "mixed";
+  if (pos > neg) return "positive";
+  if (neg > pos) return "negative";
+  return "neutral";
 }
 
-function normalizeTopic(topic: unknown): NarrativeTopicSummary | null {
-  if (!topic || typeof topic !== "object") return null;
-  const record = topic as Record<string, unknown>;
+function clusterPosts(
+  posts: Array<{
+    handle: string;
+    content: string;
+    summary: string | null;
+    postedAt: Date;
+    engagement: number;
+    topics: string[];
+  }>
+): TopicCluster[] {
+  const map = new Map<string, TopicCluster>();
 
-  const topic_name = compactWhitespace(typeof record.topic_name === "string" ? record.topic_name : "");
-  const summary = compactWhitespace(typeof record.summary === "string" ? record.summary : "");
-  const why_it_matters = compactWhitespace(typeof record.why_it_matters === "string" ? record.why_it_matters : "");
-  const post_count = typeof record.post_count === "number" ? Math.max(0, Math.floor(record.post_count)) : 0;
+  for (const post of posts) {
+    const primary = post.topics[0] || "general";
+    const label = primary.replace(/[-_]/g, " ");
 
-  if (!topic_name || !summary || !why_it_matters) return null;
+    if (!map.has(label)) {
+      map.set(label, { label, posts: [] });
+    }
 
-  const toneCandidate = typeof record.tone === "string" ? record.tone.toLowerCase() : "neutral";
-  const tone: ContextSummaryTone = ["positive", "negative", "neutral", "mixed"].includes(toneCandidate)
-    ? (toneCandidate as ContextSummaryTone)
-    : toneFromText(`${summary} ${why_it_matters}`);
-
-  return {
-    topic_name: truncate(topic_name, 90),
-    summary: truncate(summary, 280),
-    tone,
-    why_it_matters: truncate(why_it_matters, 240),
-    engagement_angles: ensureArray(record.engagement_angles, 5),
-    respond_to_handles: ensureArray(record.respond_to_handles, 4).map((handle) => handle.replace(/^@+/, "")),
-    key_terms: ensureArray(record.key_terms, 8),
-    post_count,
-  };
-}
-
-function normalizeGlobalSummary(value: unknown): GlobalNarrativeSummary {
-  const record = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
-  return {
-    key_narratives_right_now: ensureArray(record.key_narratives_right_now, 6),
-    gaining_momentum: ensureArray(record.gaining_momentum, 6),
-    fading: ensureArray(record.fading, 4),
-    attention_concentrated: ensureArray(record.attention_concentrated, 4),
-    top_opportunities_to_engage: ensureArray(record.top_opportunities_to_engage, 6),
-  };
-}
-
-function extractJsonObject(value: string) {
-  const start = value.indexOf("{");
-  const end = value.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-  try {
-    return JSON.parse(value.slice(start, end + 1));
-  } catch {
-    return null;
+    map.get(label)!.posts.push(post);
   }
+
+  return [...map.values()]
+    .map((cluster) => ({
+      ...cluster,
+      posts: cluster.posts.sort((a, b) => b.engagement - a.engagement),
+    }))
+    .sort((a, b) => b.posts.length - a.posts.length)
+    .slice(0, 8);
 }
 
-function fallbackModelOutput(clusters: ClusterBucket[], keyTopics: string[]): ModelOutput {
-  const topics: NarrativeTopicSummary[] = clusters.map((cluster) => {
-    const sample = cluster.posts.slice(0, 2).map((post) => truncate(post.summary || post.content, 140)).join(" ");
+function extractKeyTopics(clusters: TopicCluster[]) {
+  const freq = new Map<string, number>();
 
-    return {
-      topic_name: cluster.label,
-      summary: truncate(
-        `Conversation is centering on ${cluster.label.toLowerCase()} with ${cluster.posts.length} tracked post(s). ${sample}`,
-        280
-      ),
-      tone: toneFromText(sample),
-      why_it_matters: truncate(
-        `This narrative is influencing ${cluster.handles.size} tracked account(s) and can shift attention around the current context.`,
-        220
-      ),
-      engagement_angles: [
-        `Add a concrete operator take on ${cluster.label.toLowerCase()}.`,
-        "Reply to high-engagement posts with execution evidence or specific data.",
-      ],
-      respond_to_handles: [...cluster.handles].slice(0, 4),
-      key_terms: [...cluster.terms].slice(0, 8),
-      post_count: cluster.posts.length,
-    };
-  });
+  for (const cluster of clusters) {
+    for (const post of cluster.posts) {
+      for (const topic of post.topics) {
+        const key = topic.toLowerCase();
+        if (BASELINE.has(key)) continue;
+        freq.set(key, (freq.get(key) || 0) + 1);
+      }
+    }
+  }
 
-  return {
-    global_summary: {
-      key_narratives_right_now:
-        topics.slice(0, 4).map((topic) => topic.topic_name).length > 0
-          ? topics.slice(0, 4).map((topic) => topic.topic_name)
-          : keyTopics.slice(0, 4),
-      gaining_momentum: topics.slice(0, 3).map((topic) => `${topic.topic_name} is gaining velocity.`),
-      fading: [],
-      attention_concentrated: [
-        `${topics.reduce((sum, topic) => sum + topic.post_count, 0)} posts across ${topics.length} topic cluster(s).`,
-      ],
-      top_opportunities_to_engage: topics.flatMap((topic) => topic.engagement_angles.slice(0, 1)).slice(0, 5),
-    },
-    topics,
-  };
+  return [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([topic]) => topic).slice(0, 14);
 }
 
 function buildPrompt(
   center: IntelligenceCenter,
   sourcePlatform: SourcePlatform,
   windowHours: number,
-  clusters: ClusterBucket[],
+  clusters: TopicCluster[],
   keyTopics: string[]
 ) {
   const payload = clusters.map((cluster) => ({
     topic_seed: cluster.label,
     post_count: cluster.posts.length,
-    top_terms: [...cluster.terms].slice(0, 12),
-    active_handles: [...cluster.handles].slice(0, 8),
-    sample_posts: cluster.posts.slice(0, 4).map((post) => ({
+    sample_posts: cluster.posts.slice(0, 5).map((post) => ({
       handle: post.handle,
-      posted_at: post.postedAt.toISOString(),
+      text: truncate(post.content, 220),
+      summary: post.summary ? truncate(post.summary, 180) : null,
       engagement: post.engagement,
-      text: truncate(post.content, 260),
-      note: post.summary ? truncate(post.summary, 200) : null,
+      posted_at: post.postedAt.toISOString(),
+      detected_topics: post.topics,
     })),
   }));
 
   return [
-    "You are an operations-focused social intelligence analyst for a comms/operator team.",
-    "Generate concise command-layer briefings.",
-    "Do NOT compare with other platforms. Stay strictly inside the provided context.",
-    "Avoid fluff, hedging, and generic wording.",
-    "Ignore baseline labels like IOTA/TWIN as topic names unless paired with specific differentiators.",
-    "Return STRICT JSON only (no markdown).",
-    "",
+    "You are an operator intelligence assistant.",
+    "Output concise JSON only. No markdown.",
+    "Do not compare platforms. Stay strictly inside the provided context.",
+    "Avoid fluff and generic phrasing.",
+    "Baseline words like IOTA/TWIN are context labels, not useful topic labels.",
     `Context center: ${center}`,
     `Context platform: ${sourcePlatform}`,
-    `Time window hours: ${windowHours}`,
-    `Pre-extracted key topics: ${keyTopics.join(", ") || "none"}`,
-    "",
-    "JSON schema:",
-    "{",
-    '  "global_summary": {',
-    '    "key_narratives_right_now": ["..."],',
-    '    "gaining_momentum": ["..."],',
-    '    "fading": ["..."],',
-    '    "attention_concentrated": ["..."],',
-    '    "top_opportunities_to_engage": ["..."]',
-    "  },",
-    '  "topics": [',
-    "    {",
-    '      "topic_name": "...",',
-    '      "summary": "2-3 sentences max",',
-    '      "tone": "positive|negative|neutral|mixed",',
-    '      "why_it_matters": "1-2 sentences",',
-    '      "engagement_angles": ["action 1", "action 2"],',
-    '      "respond_to_handles": ["handle1", "handle2"],',
-    '      "key_terms": ["term1", "term2"],',
-    '      "post_count": 0',
-    "    }",
-    "  ]",
-    "}",
-    "",
+    `Window hours: ${windowHours}`,
+    `Pre-key-topics: ${keyTopics.join(", ") || "none"}`,
+    "Required JSON schema:",
+    '{"global_summary":{"key_narratives_right_now":[],"gaining_momentum":[],"fading":[],"attention_concentrated":[],"top_opportunities_to_engage":[]},"topics":[{"topic_name":"","summary":"","tone":"positive|negative|neutral|mixed","why_it_matters":"","engagement_angles":[],"respond_to_handles":[],"key_terms":[],"post_count":0}] }',
     "Cluster input:",
     JSON.stringify(payload, null, 2),
   ].join("\n");
 }
 
-async function summarizeWithModel(
-  center: IntelligenceCenter,
-  sourcePlatform: SourcePlatform,
-  windowHours: number,
-  clusters: ClusterBucket[],
-  keyTopics: string[]
-): Promise<{ output: ModelOutput; model: string }> {
-  const prompt = buildPrompt(center, sourcePlatform, windowHours, clusters, keyTopics);
+function fallbackOutput(clusters: TopicCluster[], keyTopics: string[]): ModelOutput {
+  const topics: NarrativeTopicSummary[] = clusters.map((cluster) => {
+    const merged = cluster.posts.slice(0, 2).map((p) => p.summary || p.content).join(" ");
+    const handles = [...new Set(cluster.posts.map((p) => p.handle))].slice(0, 4);
 
-  if (SUMMARY_PROVIDER !== "openai") {
     return {
-      output: fallbackModelOutput(clusters, keyTopics),
-      model: "heuristic-fallback",
+      topic_name: cluster.label,
+      summary: truncate(
+        `Tracked accounts are discussing ${cluster.label} with ${cluster.posts.length} post(s) in this context.`,
+        220
+      ),
+      tone: toneFromText(merged),
+      why_it_matters: "This narrative affects near-term visibility and engagement opportunities around tracked accounts.",
+      engagement_angles: [
+        `Reply with one concrete operator insight on ${cluster.label}.`,
+        "Add a short evidence-backed take with one measurable implication.",
+      ],
+      respond_to_handles: handles,
+      key_terms: cluster.posts.flatMap((p) => p.topics).slice(0, 8),
+      post_count: cluster.posts.length,
     };
-  }
+  });
 
-  const client = getOpenAiClient();
-  if (!client) {
-    return {
-      output: fallbackModelOutput(clusters, keyTopics),
-      model: "heuristic-no-api-key",
-    };
-  }
+  return {
+    global_summary: {
+      key_narratives_right_now: topics.slice(0, 4).map((t) => t.topic_name),
+      gaining_momentum: topics.slice(0, 3).map((t) => `${t.topic_name} gaining momentum`),
+      fading: [],
+      attention_concentrated: [`${topics.length} active clusters`, `${keyTopics.slice(0, 4).join(", ")}`],
+      top_opportunities_to_engage: topics.flatMap((t) => t.engagement_angles.slice(0, 1)).slice(0, 6),
+    },
+    topics,
+  };
+}
+
+function parseOutput(raw: string) {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end === -1) return null;
 
   try {
-    const response = await client.responses.create({
-      model: DEFAULT_SUMMARY_MODEL,
-      input: prompt,
-      temperature: 0.1,
-      max_output_tokens: 1400,
-    });
-
-    const parsed = extractJsonObject(response.output_text || "");
-    if (!parsed || typeof parsed !== "object") {
-      return {
-        output: fallbackModelOutput(clusters, keyTopics),
-        model: `${DEFAULT_SUMMARY_MODEL}-parse-fallback`,
-      };
-    }
-
-    const record = parsed as Record<string, unknown>;
-    const topics = ensureUnknownArray(record.topics, 10)
-      .map((item) => normalizeTopic(item))
-      .filter((item): item is NarrativeTopicSummary => Boolean(item));
-
-    const normalizedTopics = topics.length > 0 ? topics : fallbackModelOutput(clusters, keyTopics).topics;
-
-    return {
-      output: {
-        global_summary: normalizeGlobalSummary(record.global_summary),
-        topics: normalizedTopics,
-      },
-      model: DEFAULT_SUMMARY_MODEL,
-    };
+    return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
   } catch {
-    return {
-      output: fallbackModelOutput(clusters, keyTopics),
-      model: `${DEFAULT_SUMMARY_MODEL}-error-fallback`,
-    };
+    return null;
   }
 }
 
-function toContextNarrativeSummary(
-  row: {
-    center: "IOTA" | "TWIN";
-    sourcePlatform: "X" | "LINKEDIN";
-    windowHours: number;
-    postCount: number;
-    generatedAt: Date;
-    summaryJson: unknown;
-    keyTopics: string[];
-  }
-): ContextNarrativeSummary {
-  const payload = (row.summaryJson && typeof row.summaryJson === "object" ? row.summaryJson : {}) as Record<string, unknown>;
+function normalizeTopic(value: unknown): NarrativeTopicSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
 
-  const topics = Array.isArray(payload.topics)
-    ? payload.topics
-        .map((topic) => normalizeTopic(topic))
-        .filter((topic): topic is NarrativeTopicSummary => Boolean(topic))
-    : [];
+  const topic_name = compactWhitespace(typeof v.topic_name === "string" ? v.topic_name : "");
+  const summary = compactWhitespace(typeof v.summary === "string" ? v.summary : "");
+  const why_it_matters = compactWhitespace(typeof v.why_it_matters === "string" ? v.why_it_matters : "");
+  const post_count = typeof v.post_count === "number" ? Math.max(0, Math.floor(v.post_count)) : 0;
+
+  if (!topic_name || !summary || !why_it_matters) return null;
+
+  const toneRaw = typeof v.tone === "string" ? v.tone.toLowerCase() : "neutral";
+  const tone: ContextSummaryTone = ["positive", "negative", "neutral", "mixed"].includes(toneRaw)
+    ? (toneRaw as ContextSummaryTone)
+    : "neutral";
+
+  return {
+    topic_name,
+    summary: truncate(summary, 280),
+    tone,
+    why_it_matters: truncate(why_it_matters, 220),
+    engagement_angles: ensureArray(v.engagement_angles, 5),
+    respond_to_handles: ensureArray(v.respond_to_handles, 6).map((h) => h.replace(/^@+/, "")),
+    key_terms: ensureArray(v.key_terms, 10).filter((term) => !BASELINE.has(term.toLowerCase())),
+    post_count,
+  };
+}
+
+function normalizeGlobal(value: unknown): GlobalNarrativeSummary {
+  const v = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  return {
+    key_narratives_right_now: ensureArray(v.key_narratives_right_now, 6),
+    gaining_momentum: ensureArray(v.gaining_momentum, 6),
+    fading: ensureArray(v.fading, 4),
+    attention_concentrated: ensureArray(v.attention_concentrated, 4),
+    top_opportunities_to_engage: ensureArray(v.top_opportunities_to_engage, 8),
+  };
+}
+
+function toContextSummary(row: {
+  center: IntelligenceCenter;
+  sourcePlatform: SourcePlatform;
+  windowHours: number;
+  postCount: number;
+  generatedAt: Date;
+  summaryJson: unknown;
+  keyTopics: string[];
+}): ContextNarrativeSummary {
+  const payload = (row.summaryJson && typeof row.summaryJson === "object" ? row.summaryJson : {}) as Record<string, unknown>;
+  const topicsRaw = Array.isArray(payload.topics) ? payload.topics : [];
 
   return {
     center: row.center,
@@ -483,18 +260,75 @@ function toContextNarrativeSummary(
     postCount: row.postCount,
     generatedAt: row.generatedAt,
     model: typeof payload.model === "string" ? payload.model : "unknown",
-    keyTopics: row.keyTopics || [],
-    global_summary: normalizeGlobalSummary(payload.global_summary),
-    topics,
+    keyTopics: row.keyTopics,
+    global_summary: normalizeGlobal(payload.global_summary),
+    topics: topicsRaw.map((item) => normalizeTopic(item)).filter((t): t is NarrativeTopicSummary => Boolean(t)),
   };
 }
 
-export const CONTEXT_SUMMARY_PROMPT_TEMPLATE_VERSION = "v1";
+export const CONTEXT_SUMMARY_PROMPT_TEMPLATE_VERSION = "v2-account-led";
+
+export function getContextSummaryPromptPreview() {
+  return {
+    provider: SUMMARY_PROVIDER,
+    model: SUMMARY_MODEL,
+    refreshMinutes: SUMMARY_REFRESH_MINUTES,
+    maxPosts: MAX_POSTS,
+    templateVersion: CONTEXT_SUMMARY_PROMPT_TEMPLATE_VERSION,
+  };
+}
+
+async function summarizeWithModel(
+  center: IntelligenceCenter,
+  sourcePlatform: SourcePlatform,
+  windowHours: number,
+  clusters: TopicCluster[],
+  keyTopics: string[]
+): Promise<{ output: ModelOutput; model: string }> {
+  if (SUMMARY_PROVIDER !== "openai") {
+    return { output: fallbackOutput(clusters, keyTopics), model: "heuristic-fallback" };
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return { output: fallbackOutput(clusters, keyTopics), model: "heuristic-no-api-key" };
+  }
+
+  if (!client) client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  try {
+    const prompt = buildPrompt(center, sourcePlatform, windowHours, clusters, keyTopics);
+    const response = await client.responses.create({
+      model: SUMMARY_MODEL,
+      input: prompt,
+      temperature: 0.1,
+      max_output_tokens: 1300,
+    });
+
+    const parsed = parseOutput(response.output_text || "");
+    if (!parsed) {
+      return { output: fallbackOutput(clusters, keyTopics), model: `${SUMMARY_MODEL}-parse-fallback` };
+    }
+
+    const topics = (Array.isArray(parsed.topics) ? parsed.topics : [])
+      .map((item) => normalizeTopic(item))
+      .filter((t): t is NarrativeTopicSummary => Boolean(t));
+
+    return {
+      output: {
+        global_summary: normalizeGlobal(parsed.global_summary),
+        topics: topics.length > 0 ? topics : fallbackOutput(clusters, keyTopics).topics,
+      },
+      model: SUMMARY_MODEL,
+    };
+  } catch {
+    return { output: fallbackOutput(clusters, keyTopics), model: `${SUMMARY_MODEL}-error-fallback` };
+  }
+}
 
 export async function getOrCreateContextSummary(options: ContextSummaryOptions): Promise<ContextNarrativeSummary> {
   const windowHours = options.windowHours ?? 24;
   const forceRefresh = options.forceRefresh ?? false;
-  const threshold = new Date(Date.now() - SUMMARY_REFRESH_MINUTES * 60 * 1000);
+  const recentThreshold = new Date(Date.now() - SUMMARY_REFRESH_MINUTES * 60 * 1000);
 
   if (!forceRefresh) {
     const cached = await db.contextSummary.findFirst({
@@ -502,7 +336,7 @@ export async function getOrCreateContextSummary(options: ContextSummaryOptions):
         center: options.center,
         sourcePlatform: options.sourcePlatform,
         windowHours,
-        generatedAt: { gte: threshold },
+        generatedAt: { gte: recentThreshold },
       },
       orderBy: { generatedAt: "desc" },
       select: {
@@ -516,75 +350,125 @@ export async function getOrCreateContextSummary(options: ContextSummaryOptions):
       },
     });
 
-    if (cached) {
-      return toContextNarrativeSummary(cached);
-    }
+    if (cached) return toContextSummary(cached);
   }
 
   const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
 
-  const recentPosts = await db.post.findMany({
-    where: { postedAt: { gte: since } },
-    orderBy: { postedAt: "desc" },
-    take: MAX_POSTS_FOR_SUMMARY,
-    select: {
-      content: true,
-      sourceUrl: true,
-      postedAt: true,
-      likeCount: true,
-      replyCount: true,
-      repostCount: true,
-      quoteCount: true,
-      account: {
-        select: {
-          handle: true,
-          displayName: true,
+  const [watchlistRows, postsRaw] = await Promise.all([
+    db.watchlistAccount.findMany({
+      where: {
+        center: options.center,
+        sourcePlatform: options.sourcePlatform,
+      },
+      select: {
+        handleNormalized: true,
+      },
+    }),
+    db.post.findMany({
+      where: { postedAt: { gte: since } },
+      orderBy: { postedAt: "desc" },
+      take: MAX_POSTS,
+      include: {
+        account: {
+          select: {
+            handle: true,
+          },
+        },
+        summary: {
+          select: {
+            summary: true,
+          },
+        },
+        classification: {
+          select: {
+            topics: true,
+          },
         },
       },
-      summary: {
-        select: {
-          summary: true,
-        },
-      },
-    },
+    }),
+  ]);
+
+  const trackedHandles = new Set(watchlistRows.map((row) => row.handleNormalized));
+
+  const scopedPosts = postsRaw.filter((post) => {
+    if (detectSourceFromUrl(post.sourceUrl) !== options.sourcePlatform) return false;
+
+    if (trackedHandles.size === 0) {
+      return true;
+    }
+
+    return trackedHandles.has(normalizeHandle(post.account.handle));
   });
 
-  const scopedPosts = recentPosts.filter((post) => {
-    const center = pickCenterFromText(`${post.content} ${post.summary?.summary ?? ""}`, post.account.handle);
-    const sourcePlatform = detectSourcePlatformFromUrl(post.sourceUrl);
-    return center === options.center && sourcePlatform === options.sourcePlatform;
+  const normalized = scopedPosts.map((post) => {
+    const inferred = post.classification?.topics?.length
+      ? post.classification.topics
+      : classifyPostForIntelligence({
+          id: post.id,
+          provider: post.provider,
+          externalPostId: post.externalPostId,
+          accountId: post.accountId,
+          content: post.content,
+          postedAt: post.postedAt,
+          fetchedAt: post.fetchedAt,
+          sourceUrl: post.sourceUrl,
+          likeCount: post.likeCount,
+          replyCount: post.replyCount,
+          repostCount: post.repostCount,
+          quoteCount: post.quoteCount ?? 0,
+          sourcePlatform: options.sourcePlatform,
+          center: options.center,
+          account: {
+            id: post.accountId,
+            displayName: post.account.handle,
+            handle: post.account.handle,
+            category: "ECOSYSTEM",
+            tags: [],
+          },
+          summary: post.summary ? { summary: post.summary.summary, model: "db" } : null,
+          classification: null,
+        }).topics;
+
+    return {
+      handle: post.account.handle,
+      content: post.content,
+      summary: post.summary?.summary ?? null,
+      postedAt: post.postedAt,
+      engagement: post.likeCount + post.replyCount * 2 + post.repostCount * 3 + (post.quoteCount ?? 0) * 2,
+      topics: inferred,
+    };
   });
 
-  const clusters = buildClusters(scopedPosts);
-  const keyTopics = topTermsFromClusters(clusters, 12);
+  const clusters = clusterPosts(normalized);
+  const keyTopics = extractKeyTopics(clusters);
 
-  const modelResult = scopedPosts.length
+  const modelResult = normalized.length > 0
     ? await summarizeWithModel(options.center, options.sourcePlatform, windowHours, clusters, keyTopics)
     : {
         output: {
           global_summary: {
-            key_narratives_right_now: ["No meaningful discussion captured in this window."],
+            key_narratives_right_now: ["No tracked-account discussion detected in this window."],
             gaining_momentum: [],
             fading: [],
-            attention_concentrated: ["Low signal volume in current context."],
-            top_opportunities_to_engage: ["Trigger manual refresh after new posts arrive."],
+            attention_concentrated: ["No meaningful post volume in selected context."],
+            top_opportunities_to_engage: ["Expand tracked account scope or increase window."],
           },
           topics: [],
         },
         model: "empty-window",
       };
 
-  const row = await db.contextSummary.create({
+  const created = await db.contextSummary.create({
     data: {
       center: options.center,
       sourcePlatform: options.sourcePlatform,
       windowHours,
-      postCount: scopedPosts.length,
+      postCount: normalized.length,
       keyTopics,
       summaryJson: {
         model: modelResult.model,
         promptVersion: CONTEXT_SUMMARY_PROMPT_TEMPLATE_VERSION,
-        generatedAt: new Date().toISOString(),
         global_summary: modelResult.output.global_summary,
         topics: modelResult.output.topics,
       },
@@ -601,15 +485,5 @@ export async function getOrCreateContextSummary(options: ContextSummaryOptions):
     },
   });
 
-  return toContextNarrativeSummary(row);
-}
-
-export function getContextSummaryPromptPreview() {
-  return {
-    provider: SUMMARY_PROVIDER,
-    model: DEFAULT_SUMMARY_MODEL,
-    refreshMinutes: SUMMARY_REFRESH_MINUTES,
-    maxPosts: MAX_POSTS_FOR_SUMMARY,
-    templateVersion: CONTEXT_SUMMARY_PROMPT_TEMPLATE_VERSION,
-  };
+  return toContextSummary(created);
 }

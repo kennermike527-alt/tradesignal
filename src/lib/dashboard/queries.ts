@@ -2,12 +2,29 @@ import { AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client
 import { subHours } from "date-fns";
 import { db } from "@/lib/db";
 import { buildDemoPayload } from "@/lib/dashboard/demo-payload";
-import { detectSourcePlatformFromUrl, pickCenterFromText } from "@/lib/context/context-resolver";
 import { cadenceLabelForAccounts } from "@/lib/ingestion/budget-guard";
 import { getDatabaseHealth } from "@/lib/runtime/db-health";
 import { getOrCreateContextSummary } from "@/lib/summarization/context-summarization-service";
 import { fromDbWatchlistKey } from "@/lib/watchlists";
-import type { DashboardPayload, DashboardPost, DashboardStats } from "@/lib/types";
+import { applyClassificationToPosts, buildDashboardIntelligence } from "@/lib/intelligence/account-led-intelligence-service";
+import type { DashboardPayload, DashboardPost, DashboardStats, IntelligenceCenter, SourcePlatform } from "@/lib/types";
+
+function normalizeHandle(handle: string) {
+  return handle.trim().replace(/^@+/, "").toLowerCase();
+}
+
+function inferSourcePlatform(sourceUrl: string): SourcePlatform {
+  const lower = sourceUrl.toLowerCase();
+  if (lower.includes("linkedin.com")) return "LINKEDIN";
+  return "X";
+}
+
+function fallbackCenterFromTags(tags: string[]): IntelligenceCenter | null {
+  const normalized = tags.map((tag) => tag.toLowerCase());
+  if (normalized.some((tag) => tag.includes("iota"))) return "IOTA";
+  if (normalized.some((tag) => tag.includes("twin"))) return "TWIN";
+  return null;
+}
 
 function buildStats(posts: DashboardPost[], activeAccounts: number, latestStatus: IngestionStatus | null, latestAt: Date | null): DashboardStats {
   const now = Date.now();
@@ -19,8 +36,12 @@ function buildStats(posts: DashboardPost[], activeAccounts: number, latestStatus
   ).length;
 
   const opportunitiesDetected = posts.filter((post) => {
-    const text = `${post.content} ${post.summary?.summary ?? ""}`.toLowerCase();
-    return /engage|opportun|partnership|opening|window|distribution/.test(text);
+    const classification = post.classification;
+    if (!classification) return false;
+
+    return ["CONTENT_OPPORTUNITY", "REPLY_OPPORTUNITY", "RELATIONSHIP_OPPORTUNITY"].includes(
+      classification.actionability
+    );
   }).length;
 
   return {
@@ -35,7 +56,7 @@ function buildStats(posts: DashboardPost[], activeAccounts: number, latestStatus
   };
 }
 
-export async function getDashboardPayload(limit = 320): Promise<DashboardPayload> {
+export async function getDashboardPayload(limit = 420): Promise<DashboardPayload> {
   const dbHealth = await getDatabaseHealth();
 
   if (!dbHealth.ok) {
@@ -66,6 +87,18 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
               model: true,
             },
           },
+          classification: {
+            select: {
+              topics: true,
+              postType: true,
+              tone: true,
+              actionability: true,
+              whyItMatters: true,
+              actionableAngle: true,
+              confidence: true,
+              model: true,
+            },
+          },
         },
       }),
       db.account.findMany({
@@ -87,6 +120,7 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
           center: true,
           sourcePlatform: true,
           handle: true,
+          handleNormalized: true,
           displayName: true,
           createdAt: true,
         },
@@ -124,9 +158,22 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       });
     }
 
+    const assignmentMap = new Map<string, IntelligenceCenter[]>();
+    for (const row of watchlistRows) {
+      const key = `${row.sourcePlatform}:${row.handleNormalized}`;
+      if (!assignmentMap.has(key)) assignmentMap.set(key, []);
+      assignmentMap.get(key)!.push(row.center);
+    }
+
     const posts: DashboardPost[] = postsRaw.map((post) => {
-      const sourcePlatform = detectSourcePlatformFromUrl(post.sourceUrl);
-      const center = pickCenterFromText(`${post.content} ${post.summary?.summary ?? ""}`, post.account.handle);
+      const sourcePlatform = inferSourcePlatform(post.sourceUrl);
+      const assignmentKey = `${sourcePlatform}:${normalizeHandle(post.account.handle)}`;
+      const assignedCenters = assignmentMap.get(assignmentKey) || [];
+
+      const center =
+        assignedCenters[0] ||
+        fallbackCenterFromTags(post.account.tags) ||
+        null;
 
       return {
         id: post.id,
@@ -145,8 +192,11 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
         center,
         account: post.account,
         summary: post.summary,
+        classification: post.classification,
       };
     });
+
+    const hydratedPosts = applyClassificationToPosts(posts);
 
     const watchlistAssignments = watchlistRows.map((row) => ({
       id: row.id,
@@ -158,19 +208,22 @@ export async function getDashboardPayload(limit = 320): Promise<DashboardPayload
       createdAt: row.createdAt,
     }));
 
+    const intelligence = await buildDashboardIntelligence(hydratedPosts);
+
     const stats = buildStats(
-      posts,
+      hydratedPosts,
       accounts.length,
       latestRun?.status ?? null,
       latestRun?.finishedAt ?? latestRun?.startedAt ?? null
     );
 
     return {
-      posts,
+      posts: hydratedPosts,
       accounts,
       categories: Object.values(AccountCategory),
       watchlistAssignments,
       initialContextSummary,
+      intelligence,
       stats,
       ingestionRuns,
       system: {

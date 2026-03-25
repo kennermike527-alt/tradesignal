@@ -9,6 +9,7 @@ datasource db {
 
 enum SocialProvider {
   X
+  LINKEDIN
 }
 
 enum AccountCategory {
@@ -45,22 +46,102 @@ enum WatchlistKey {
   ECOSYSTEM
 }
 
+enum TrackedAccountRole {
+  TRADER
+  FOUNDER
+  COMPANY
+  COMPETITOR
+  MEDIA
+  RESEARCHER
+  INFLUENCER
+  ECOSYSTEM_ACTOR
+  ANON
+  OTHER
+}
+
+enum PostType {
+  MARKET_COMMENTARY
+  MACRO_COMMENTARY
+  TRADE_THESIS
+  NEWS_REACTION
+  PRODUCT_UPDATE
+  PARTNERSHIP_MENTION
+  OPINION
+  EDUCATIONAL_THREAD
+  ANNOUNCEMENT
+  MEME_CULTURAL
+  COMMUNITY_SIGNAL
+  CALL_TO_ACTION
+  OTHER
+}
+
+enum PostTone {
+  BULLISH
+  BEARISH
+  NEUTRAL
+  MIXED
+  PROMOTIONAL
+  REACTIVE
+  ANALYTICAL
+}
+
+enum Actionability {
+  CONTENT_OPPORTUNITY
+  REPLY_OPPORTUNITY
+  RELATIONSHIP_OPPORTUNITY
+  TREND_WORTH_MONITORING
+  NO_ACTION
+}
+
+enum EngagementType {
+  REPLY
+  REPOST
+  QUOTE
+  COMMENT
+  MENTION
+  LIKE
+}
+
+enum InterestKind {
+  TRADE_RELATED
+  ADJACENT_NON_TRADE
+}
+
 model Account {
-  id          String          @id @default(cuid())
-  displayName String
-  handle      String
-  provider    SocialProvider  @default(X)
-  category    AccountCategory
-  tags        String[]        @default([])
-  isActive    Boolean         @default(true)
+  id               String             @id @default(cuid())
+  provider         SocialProvider
+  handle           String
+  displayName      String
+  category         AccountCategory
+  tags             String[]           @default([])
+  isActive         Boolean            @default(true)
   posts            Post[]
+  trackedProfile   TrackedAccount?
   watchlistEntries WatchlistAccount[]
-  createdAt        DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   @@unique([provider, handle])
   @@index([provider, isActive])
   @@index([category])
+}
+
+model TrackedAccount {
+  id             String             @id @default(cuid())
+  accountId      String             @unique
+  account        Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  role           TrackedAccountRole @default(OTHER)
+  watchlistKey   WatchlistKey       @default(ALL)
+  center         IntelligenceCenter?
+  sourcePlatform SourcePlatform?
+  notes          String?
+  aiSuggestedTags String[]          @default([])
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([watchlistKey, active])
+  @@index([center, sourcePlatform])
 }
 
 model WatchlistAccount {
@@ -82,38 +163,167 @@ model WatchlistAccount {
 }
 
 model Post {
-  id             String         @id @default(cuid())
+  id             String        @id @default(cuid())
   provider       SocialProvider
   externalPostId String
   accountId      String
-  account        Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  content        String         @db.Text
+  account        Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  content        String
   postedAt       DateTime
   sourceUrl      String
-  likeCount      Int            @default(0)
-  replyCount     Int            @default(0)
-  repostCount    Int            @default(0)
+  likeCount      Int           @default(0)
+  replyCount     Int           @default(0)
+  repostCount    Int           @default(0)
   quoteCount     Int?
-  fetchedAt      DateTime
+  fetchedAt      DateTime      @default(now())
   rawPayload     Json?
   summary        PostSummary?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  classification PostClassification?
+  engagementEvents EngagementEvent[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@unique([provider, externalPostId])
-  @@index([postedAt(sort: Desc)])
   @@index([accountId, postedAt(sort: Desc)])
-  @@index([fetchedAt(sort: Desc)])
+  @@index([postedAt(sort: Desc)])
+  @@index([provider])
 }
 
 model PostSummary {
   id        String   @id @default(cuid())
   postId    String   @unique
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  summary   String   @db.Text
+  summary   String
   model     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model PostClassification {
+  id            String       @id @default(cuid())
+  postId        String       @unique
+  post          Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  topics        String[]     @default([])
+  postType      PostType
+  tone          PostTone
+  actionability Actionability
+  whyItMatters  String?
+  actionableAngle String?
+  confidence    Float        @default(0.5)
+  model         String       @default("heuristic-v1")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([postType, tone])
+  @@index([actionability])
+}
+
+model EngagingAccount {
+  id                   String              @id @default(cuid())
+  provider             SocialProvider
+  handle               String
+  displayName          String?
+  firstSeenAt          DateTime            @default(now())
+  lastSeenAt           DateTime            @default(now())
+  totalEngagements     Int                 @default(0)
+  influenceScore       Float               @default(0)
+  engagementEvents     EngagementEvent[]
+  interestProfiles     EngagerInterestProfile[]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@unique([provider, handle])
+  @@index([provider, totalEngagements])
+}
+
+model EngagementEvent {
+  id               String          @id @default(cuid())
+  provider         SocialProvider
+  trackedAccountId String
+  trackedAccount   Account         @relation(fields: [trackedAccountId], references: [id], onDelete: Cascade)
+  engagingAccountId String
+  engagingAccount  EngagingAccount @relation(fields: [engagingAccountId], references: [id], onDelete: Cascade)
+  postId           String?
+  post             Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+  engagementType   EngagementType
+  occurredAt       DateTime        @default(now())
+  count            Int             @default(1)
+  rawPayload       Json?
+  createdAt        DateTime        @default(now())
+
+  @@index([provider, trackedAccountId, occurredAt(sort: Desc)])
+  @@index([engagingAccountId, occurredAt(sort: Desc)])
+  @@index([engagementType])
+}
+
+model EngagerInterestProfile {
+  id               String          @id @default(cuid())
+  engagingAccountId String
+  engagingAccount  EngagingAccount @relation(fields: [engagingAccountId], references: [id], onDelete: Cascade)
+  center           IntelligenceCenter?
+  sourcePlatform   SourcePlatform?
+  inferredInterests String[]       @default([])
+  confidence       Float           @default(0.5)
+  representativeKeywords String[]  @default([])
+  representativePostIds String[]   @default([])
+  interestKind     InterestKind    @default(ADJACENT_NON_TRADE)
+  generatedAt      DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+
+  @@index([engagingAccountId, generatedAt(sort: Desc)])
+  @@index([interestKind])
+}
+
+model InterestCluster {
+  id               String            @id @default(cuid())
+  center           IntelligenceCenter?
+  sourcePlatform   SourcePlatform?
+  name             String
+  keywords         String[]          @default([])
+  memberAccountIds String[]          @default([])
+  tradeRelatedScore Float            @default(0)
+  generatedAt      DateTime          @default(now())
+  createdAt        DateTime          @default(now())
+
+  @@index([center, sourcePlatform, generatedAt(sort: Desc)])
+}
+
+model TopicSummary {
+  id              String             @id @default(cuid())
+  center          IntelligenceCenter?
+  sourcePlatform  SourcePlatform?
+  windowHours     Int
+  sourceLayer     String             @default("tracked_accounts")
+  topicName       String
+  summary         String
+  tone            PostTone?
+  keyTerms        String[]           @default([])
+  momentumScore   Float              @default(0)
+  generatedAt     DateTime           @default(now())
+  createdAt       DateTime           @default(now())
+
+  @@index([center, sourcePlatform, windowHours, generatedAt(sort: Desc)])
+  @@index([sourceLayer])
+}
+
+model ActionableSignal {
+  id               String             @id @default(cuid())
+  center           IntelligenceCenter?
+  sourcePlatform   SourcePlatform?
+  signalType       Actionability
+  title            String
+  description      String
+  targetPostId     String?
+  targetPost       Post?              @relation(fields: [targetPostId], references: [id], onDelete: SetNull)
+  targetAccountId  String?
+  targetAccount    Account?           @relation(fields: [targetAccountId], references: [id], onDelete: SetNull)
+  confidence       Float              @default(0.5)
+  priority         Int                @default(0)
+  generatedAt      DateTime           @default(now())
+  createdAt        DateTime           @default(now())
+
+  @@index([center, sourcePlatform, generatedAt(sort: Desc)])
+  @@index([signalType, priority])
 }
 
 model IngestionRun {

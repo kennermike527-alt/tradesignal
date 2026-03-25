@@ -1,4 +1,14 @@
-import type { Account, AccountCategory, IngestionStatus, SocialProvider } from "@prisma/client";
+import type {
+  Account,
+  AccountCategory,
+  Actionability,
+  EngagementType,
+  IngestionStatus,
+  InterestKind,
+  PostTone,
+  PostType,
+  SocialProvider,
+} from "@prisma/client";
 
 export type TrackedAccount = Pick<Account, "id" | "displayName" | "handle" | "category" | "tags" | "isActive" | "provider">;
 
@@ -39,6 +49,17 @@ export type ContextNarrativeSummary = {
   topics: NarrativeTopicSummary[];
 };
 
+export type PostClassificationView = {
+  topics: string[];
+  postType: PostType;
+  tone: PostTone;
+  actionability: Actionability;
+  whyItMatters: string | null;
+  actionableAngle: string | null;
+  confidence: number;
+  model: string;
+};
+
 export type NormalizedSocialPost = {
   provider: SocialProvider;
   externalPostId: string;
@@ -63,8 +84,8 @@ export type DashboardAccount = {
 export type DashboardPost = {
   id: string;
   provider: SocialProvider;
-  accountId: string;
   externalPostId: string;
+  accountId: string;
   content: string;
   postedAt: Date;
   fetchedAt: Date;
@@ -80,6 +101,7 @@ export type DashboardPost = {
     summary: string;
     model: string;
   } | null;
+  classification: PostClassificationView | null;
 };
 
 export type DashboardStats = {
@@ -111,6 +133,59 @@ export type WatchlistAssignment = {
   createdAt: Date;
 };
 
+export type TrackedOverview = {
+  topTopics: string[];
+  topPostTypes: Array<{ type: PostType | "OTHER"; count: number }>;
+  topTrackedCategories: Array<{ category: AccountCategory; count: number }>;
+};
+
+export type EngagerView = {
+  id: string;
+  provider: SocialProvider;
+  handle: string;
+  displayName: string | null;
+  totalEngagements: number;
+  interactionFrequency: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  influenceScore: number;
+};
+
+export type AdjacentInterestView = {
+  interest: string;
+  confidence: number;
+  representativeKeywords: string[];
+  representativeHandles: string[];
+  interestKind: InterestKind;
+};
+
+export type ActionableSignalView = {
+  id: string;
+  signalType: Actionability;
+  title: string;
+  description: string;
+  targetPostId: string | null;
+  targetAccountId: string | null;
+  priority: number;
+  confidence: number;
+  generatedAt: Date;
+};
+
+export type ProviderCapabilityView = {
+  provider: SourcePlatform;
+  availableEngagementTypes: EngagementType[];
+  unavailableEngagementTypes: EngagementType[];
+  notes: string;
+};
+
+export type DashboardIntelligence = {
+  trackedOverview: TrackedOverview;
+  topEngagers: EngagerView[];
+  adjacentInterests: AdjacentInterestView[];
+  actionableSignals: ActionableSignalView[];
+  providerCapabilities: ProviderCapabilityView[];
+};
+
 export type TerminalSystemStatus = {
   mode: "LIVE" | "DEMO";
   dbCode: "CONNECTED" | "MISSING_DATABASE_URL" | "UNREACHABLE";
@@ -127,6 +202,7 @@ export type DashboardPayload = {
   categories: AccountCategory[];
   watchlistAssignments: WatchlistAssignment[];
   initialContextSummary: ContextNarrativeSummary | null;
+  intelligence: DashboardIntelligence;
   stats: DashboardStats;
   ingestionRuns: IngestionRunPreview[];
   system: TerminalSystemStatus;

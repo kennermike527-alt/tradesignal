@@ -191,7 +191,7 @@ function dbTone(code: DashboardPayload["system"]["dbCode"]) {
 }
 
 export function DashboardClient({ payload }: Props) {
-  const { posts, categories, ingestionRuns, system } = payload;
+  const { posts, categories, ingestionRuns, system, intelligence } = payload;
 
   const [watchlistAssignments, setWatchlistAssignments] = React.useState(payload.watchlistAssignments);
 
@@ -213,6 +213,13 @@ export function DashboardClient({ payload }: Props) {
   const [highSignalOnly, setHighSignalOnly] = React.useState(false);
   const [competitorsOnly, setCompetitorsOnly] = React.useState(false);
   const [opportunitiesOnly, setOpportunitiesOnly] = React.useState(false);
+  const [postTypeFilter, setPostTypeFilter] = React.useState<string>("all");
+  const [toneFilter, setToneFilter] = React.useState<string>("all");
+  const [actionabilityFilter, setActionabilityFilter] = React.useState<string>("all");
+  const [engagingHandleFilter, setEngagingHandleFilter] = React.useState<string>("all");
+  const [adjacentInterestFilter, setAdjacentInterestFilter] = React.useState<string>("all");
+  const [interestKindFilter, setInterestKindFilter] = React.useState<string>("all");
+  const [engagementTypeFilter, setEngagementTypeFilter] = React.useState<string>("all");
   const [narrativeFilter, setNarrativeFilter] = React.useState<string>("all");
   const [selectedKeyTopics, setSelectedKeyTopics] = React.useState<string[]>([]);
   const [savedPostIds, setSavedPostIds] = React.useState<string[]>([]);
@@ -248,6 +255,12 @@ export function DashboardClient({ payload }: Props) {
   const [engageTargetPostId, setEngageTargetPostId] = React.useState<string | null>(null);
   const [xPending, startXTransition] = React.useTransition();
 
+  const trackedOverview = intelligence.trackedOverview;
+  const topEngagers = intelligence.topEngagers;
+  const adjacentInterests = intelligence.adjacentInterests;
+  const actionableSignals = intelligence.actionableSignals;
+  const providerCapabilities = intelligence.providerCapabilities;
+
   const centerScopedPosts = React.useMemo(() => posts.filter((post) => post.center === centerFocus), [posts, centerFocus]);
 
   const sourceScopedPosts = React.useMemo(
@@ -258,6 +271,30 @@ export function DashboardClient({ payload }: Props) {
   const sourceScopedAccounts = React.useMemo(() => {
     const ids = new Set(sourceScopedPosts.map((post) => post.accountId));
     return [...new Map(sourceScopedPosts.map((post) => [post.accountId, post.account])).values()].filter((acc) => ids.has(acc.id));
+  }, [sourceScopedPosts]);
+
+  const postTypeOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const post of sourceScopedPosts) {
+      if (post.classification?.postType) set.add(post.classification.postType);
+    }
+    return [...set].sort();
+  }, [sourceScopedPosts]);
+
+  const toneOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const post of sourceScopedPosts) {
+      if (post.classification?.tone) set.add(post.classification.tone);
+    }
+    return [...set].sort();
+  }, [sourceScopedPosts]);
+
+  const actionabilityOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const post of sourceScopedPosts) {
+      if (post.classification?.actionability) set.add(post.classification.actionability);
+    }
+    return [...set].sort();
   }, [sourceScopedPosts]);
 
   const visualizationPosts = React.useMemo(() => {
@@ -435,6 +472,11 @@ export function DashboardClient({ payload }: Props) {
       .filter((post) => (category === "all" ? true : post.account.category === category))
       .filter((post) => inWindow(post.postedAt, timeWindow))
       .filter((post) => engagementScore(post) >= minEngagement)
+      .filter((post) => (postTypeFilter === "all" ? true : post.classification?.postType === postTypeFilter))
+      .filter((post) => (toneFilter === "all" ? true : post.classification?.tone === toneFilter))
+      .filter((post) =>
+        actionabilityFilter === "all" ? true : post.classification?.actionability === actionabilityFilter
+      )
       .filter((post) =>
         query.trim().length === 0
           ? true
@@ -445,6 +487,12 @@ export function DashboardClient({ payload }: Props) {
       .filter((post) => (highSignalOnly ? isHighSignal(post) : true))
       .filter((post) => (competitorsOnly ? post.account.category === AccountCategory.COMPETITOR : true))
       .filter((post) => (opportunitiesOnly ? isOpportunity(post) : true))
+      .filter((post) => {
+        if (engagingHandleFilter === "all") return true;
+        const text = `${post.content} ${post.summary?.summary ?? ""}`.toLowerCase();
+        return text.includes(engagingHandleFilter.toLowerCase());
+      })
+      .filter((post) => (adjacentInterestFilter === "all" ? true : postMatchesKeyTopic(post, adjacentInterestFilter)))
       .filter((post) => {
         if (narrativeFilter === "all") return true;
         if (!selectedNarrativeTopic) return true;
@@ -458,10 +506,15 @@ export function DashboardClient({ payload }: Props) {
     category,
     timeWindow,
     minEngagement,
+    postTypeFilter,
+    toneFilter,
+    actionabilityFilter,
     query,
     highSignalOnly,
     competitorsOnly,
     opportunitiesOnly,
+    engagingHandleFilter,
+    adjacentInterestFilter,
     narrativeFilter,
     selectedNarrativeTopic,
     activeWatchlistHandleSet,
@@ -478,6 +531,26 @@ export function DashboardClient({ payload }: Props) {
     return [...filtered].sort((a, b) => engagementScore(b) - engagementScore(a)).slice(0, 6);
   }, [filtered]);
 
+  const filteredTopEngagers = React.useMemo(() => {
+    return topEngagers.filter((engager) =>
+      engagingHandleFilter === "all" ? true : engager.handle.toLowerCase() === engagingHandleFilter.toLowerCase()
+    );
+  }, [topEngagers, engagingHandleFilter]);
+
+  const filteredAdjacentInterests = React.useMemo(() => {
+    return adjacentInterests.filter((interest) => {
+      if (adjacentInterestFilter !== "all" && interest.interest !== adjacentInterestFilter) return false;
+      if (interestKindFilter !== "all" && interest.interestKind !== interestKindFilter) return false;
+      return true;
+    });
+  }, [adjacentInterests, adjacentInterestFilter, interestKindFilter]);
+
+  const filteredActionableSignals = React.useMemo(() => {
+    return actionableSignals.filter((signal) =>
+      actionabilityFilter === "all" ? true : signal.signalType === actionabilityFilter
+    );
+  }, [actionableSignals, actionabilityFilter]);
+
   const resetFilters = () => {
     setWatchlist("all");
     setAccountId("all");
@@ -485,6 +558,13 @@ export function DashboardClient({ payload }: Props) {
     setQuery("");
     setMinEngagement(0);
     setTimeWindow("24h");
+    setPostTypeFilter("all");
+    setToneFilter("all");
+    setActionabilityFilter("all");
+    setEngagingHandleFilter("all");
+    setAdjacentInterestFilter("all");
+    setInterestKindFilter("all");
+    setEngagementTypeFilter("all");
     setHighSignalOnly(false);
     setCompetitorsOnly(false);
     setOpportunitiesOnly(false);
@@ -1078,6 +1158,117 @@ export function DashboardClient({ payload }: Props) {
                   </select>
                 </label>
 
+                <label className="grid gap-1 text-[11px] text-muted-foreground md:col-span-2 xl:col-span-2">
+                  <span>Post type</span>
+                  <select
+                    value={postTypeFilter}
+                    onChange={(event) => setPostTypeFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All post types</option>
+                    {postTypeOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option.replace(/_/g, " ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-[11px] text-muted-foreground">
+                  <span>Tone</span>
+                  <select
+                    value={toneFilter}
+                    onChange={(event) => setToneFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All tones</option>
+                    {toneOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option.toLowerCase()}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-[11px] text-muted-foreground">
+                  <span>Actionability</span>
+                  <select
+                    value={actionabilityFilter}
+                    onChange={(event) => setActionabilityFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All actions</option>
+                    {actionabilityOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option.toLowerCase().replace(/_/g, " ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-[11px] text-muted-foreground">
+                  <span>Engaging account</span>
+                  <select
+                    value={engagingHandleFilter}
+                    onChange={(event) => setEngagingHandleFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All engagers</option>
+                    {topEngagers.slice(0, 40).map((engager) => (
+                      <option key={engager.id} value={engager.handle}>
+                        @{engager.handle}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-[11px] text-muted-foreground">
+                  <span>Adjacent interest</span>
+                  <select
+                    value={adjacentInterestFilter}
+                    onChange={(event) => setAdjacentInterestFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All interests</option>
+                    {adjacentInterests.slice(0, 40).map((interest) => (
+                      <option key={interest.interest} value={interest.interest}>
+                        {interest.interest}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-[11px] text-muted-foreground">
+                  <span>Interest type</span>
+                  <select
+                    value={interestKindFilter}
+                    onChange={(event) => setInterestKindFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All</option>
+                    <option value="TRADE_RELATED">Trade-related</option>
+                    <option value="ADJACENT_NON_TRADE">Adjacent / non-trade</option>
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-[11px] text-muted-foreground">
+                  <span>Engagement type</span>
+                  <select
+                    value={engagementTypeFilter}
+                    onChange={(event) => setEngagementTypeFilter(event.target.value)}
+                    className="h-8 rounded border border-input bg-background px-2 text-xs text-foreground"
+                  >
+                    <option value="all">All supported</option>
+                    {providerCapabilities
+                      .find((cap) => cap.provider === sourceTab)
+                      ?.availableEngagementTypes.map((type) => (
+                        <option key={type} value={type}>
+                          {type.toLowerCase()}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+
                 <div className="grid gap-1 text-[11px] text-muted-foreground">
                   <span>Actions</span>
                   <button
@@ -1164,6 +1355,16 @@ export function DashboardClient({ payload }: Props) {
                               {opportunity ? (
                                 <Badge className="border-0 bg-emerald-500/15 text-[10px] text-emerald-300">engage now</Badge>
                               ) : null}
+                              {post.classification ? (
+                                <>
+                                  <Badge className="border-0 bg-sky-500/15 text-[10px] text-sky-300">
+                                    {post.classification.postType.toLowerCase().replace(/_/g, " ")}
+                                  </Badge>
+                                  <Badge className="border-0 bg-violet-500/15 text-[10px] text-violet-300">
+                                    {post.classification.tone.toLowerCase()}
+                                  </Badge>
+                                </>
+                              ) : null}
                             </div>
                             <div className="flex flex-wrap gap-1">
                               {post.account.tags.slice(0, 4).map((tag) => (
@@ -1211,6 +1412,16 @@ export function DashboardClient({ payload }: Props) {
                               <Sparkles className="size-3" /> Why this matters
                             </p>
                             <p className="text-xs leading-relaxed text-foreground/90">{post.summary.summary}</p>
+                            {post.classification?.whyItMatters ? (
+                              <p className="mt-1 text-[11px] text-muted-foreground">
+                                <span className="font-medium text-foreground">Impact:</span> {post.classification.whyItMatters}
+                              </p>
+                            ) : null}
+                            {post.classification?.actionableAngle ? (
+                              <p className="mt-1 text-[11px] text-emerald-200">
+                                <span className="font-medium text-emerald-300">Angle:</span> {post.classification.actionableAngle}
+                              </p>
+                            ) : null}
                           </div>
                         ) : (
                           <div className="rounded border border-border/70 bg-muted/20 p-2 text-xs text-muted-foreground">
@@ -1304,6 +1515,84 @@ export function DashboardClient({ payload }: Props) {
 
             <Card className="border-border/70 bg-card/70">
               <CardHeader className="pb-2">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Tracked account overview</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 p-2 pt-0 text-xs">
+                <div>
+                  <p className="text-[10px] uppercase text-muted-foreground">Top topics</p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {trackedOverview.topTopics.slice(0, 8).map((topic) => (
+                      <span key={topic} className="rounded border border-border/70 bg-background/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-muted-foreground">Top post types</p>
+                  <div className="mt-1 space-y-1">
+                    {trackedOverview.topPostTypes.slice(0, 4).map((entry) => (
+                      <div key={entry.type} className="flex items-center justify-between rounded border border-border/70 bg-background/40 px-2 py-1">
+                        <span>{String(entry.type).toLowerCase().replace(/_/g, " ")}</span>
+                        <span className="text-muted-foreground">{entry.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/70 bg-card/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Engaging audience</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 p-2 pt-0">
+                {filteredTopEngagers.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No reliable engager events available for this provider/context yet.</p>
+                ) : (
+                  filteredTopEngagers.slice(0, 6).map((engager) => (
+                    <div key={engager.id} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">@{engager.handle}</span>
+                        <span className="text-muted-foreground">{engager.totalEngagements} interactions</span>
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        first {formatDistanceToNowStrict(new Date(engager.firstSeenAt), { addSuffix: true })} · last {formatDistanceToNowStrict(
+                          new Date(engager.lastSeenAt),
+                          { addSuffix: true }
+                        )}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/70 bg-card/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Adjacent interests</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 p-2 pt-0">
+                {filteredAdjacentInterests.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No adjacent-interest profiles yet (requires engager activity ingestion).</p>
+                ) : (
+                  filteredAdjacentInterests.slice(0, 8).map((interest) => (
+                    <div key={interest.interest} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">{interest.interest}</span>
+                        <span className="text-[10px] text-muted-foreground">{interest.interestKind === "TRADE_RELATED" ? "trade" : "adjacent"}</span>
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        confidence {(interest.confidence * 100).toFixed(0)}% · {interest.representativeKeywords.slice(0, 4).join(", ")}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/70 bg-card/70">
+              <CardHeader className="pb-2">
                 <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Emerging narratives</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 p-2 pt-0">
@@ -1392,6 +1681,15 @@ export function DashboardClient({ payload }: Props) {
                 <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Engage now</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 p-2 pt-0">
+                {filteredActionableSignals.length > 0 ? (
+                  filteredActionableSignals.slice(0, 3).map((signal) => (
+                    <div key={signal.id} className="rounded border border-border/70 bg-background/40 p-2 text-xs">
+                      <p className="font-medium">{signal.title}</p>
+                      <p className="mt-0.5 text-muted-foreground">{truncate(signal.description, 110)}</p>
+                    </div>
+                  ))
+                ) : null}
+
                 {engageAngleTargets.length > 0 ? (
                   engageAngleTargets.slice(0, 4).map((item, index) => {
                     const active = item.post?.id === selectedEngagePost?.id;
@@ -1488,6 +1786,26 @@ export function DashboardClient({ payload }: Props) {
                       <span className="text-rose-300">{numberFmt.format(engagementScore(post))}</span>
                     </div>
                     <p className="mt-0.5 text-muted-foreground">{truncate(post.content, 90)}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/70 bg-card/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">Provider capability notes</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 p-2 pt-0 text-xs">
+                {(providerCapabilities.find((cap) => cap.provider === sourceTab)
+                  ? [providerCapabilities.find((cap) => cap.provider === sourceTab)!]
+                  : providerCapabilities
+                ).map((capability) => (
+                  <div key={capability.provider} className="rounded border border-border/70 bg-background/40 p-2">
+                    <p className="font-medium">{capability.provider === "X" ? "X" : "LinkedIn"}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      Supported: {capability.availableEngagementTypes.map((type) => type.toLowerCase()).join(", ") || "none"}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{capability.notes}</p>
                   </div>
                 ))}
               </CardContent>
